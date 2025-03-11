@@ -1,0 +1,104 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters", "metrics"]
+  binaryTargets   = ["native", "debian-openssl-3.0.x"]
+}
+
+generator json {
+  provider = "prisma-json-types-generator"
+  engineType = "library"
+  output = "./json-types.ts"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("ARCHIVES_DATABASE_URL")
+}
+
+model MeetingRecord {
+  id                String   @id @default(ulid())
+  name              String   @unique
+  startedAt         DateTime @db.Timestamptz(6)
+  endedAt           DateTime @db.Timestamptz(6)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  committeeId       String
+  agendaId          String?
+  videoId           String?
+  audioId           String?
+
+  ///[MeetingRawJSON]
+  rawJson Json
+
+  agenda            Blob?  @relation("meeting_agenda", fields: [agendaId], references: [id])
+  video             Blob?  @relation("meeting_video", fields: [videoId], references: [id]) 
+  audio             Blob?  @relation("meeting_audio", fields: [audioId], references: [id])
+  
+  committee Committee @relation(fields: [committeeId], references: [id])
+  videoProcessingTasks VideoProcessingTask[]
+  
+  @@unique([committeeId, startedAt])
+}
+
+model Blob {
+  id        String   @id @default(ulid())
+  bucket    String
+  key       String
+  mimetype  String
+  url       String?
+  srcUrl    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  meetingRecordAgenda MeetingRecord[] @relation("meeting_agenda")
+  meetingRecordVideo  MeetingRecord[] @relation("meeting_video")
+  meetingRecordAudio  MeetingRecord[] @relation("meeting_audio")
+  
+  videoProcessingTaskVideos VideoProcessingTask[] @relation("task_video")
+  videoProcessingTaskAudios VideoProcessingTask[] @relation("task_audio")
+}
+
+model Committee {
+  id        String   @id @default(ulid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  meetingRecords MeetingRecord[]
+}
+
+// Added models for video processing batches and tasks
+
+model VideoProcessingBatch {
+  id            String   @id @default(ulid())
+  status        String   // queued, processing, completed, failed
+  totalTasks    Int
+  completedTasks Int     @default(0)
+  failedTasks   Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tasks         VideoProcessingTask[]
+}
+
+model VideoProcessingTask {
+  id             String   @id @default(ulid())
+  viewerUrl      String?
+  downloadUrl    String?
+  status         String   // queued, processing, completed, failed
+  extractAudio   Boolean  @default(true)
+  error          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  
+  batchId        String?
+  meetingRecordId String?
+  videoId        String?
+  audioId        String?
+  
+  batch          VideoProcessingBatch? @relation(fields: [batchId], references: [id])
+  meetingRecord  MeetingRecord? @relation(fields: [meetingRecordId], references: [id])
+  video          Blob? @relation("task_video", fields: [videoId], references: [id])
+  audio          Blob? @relation("task_audio", fields: [audioId], references: [id])
+}
