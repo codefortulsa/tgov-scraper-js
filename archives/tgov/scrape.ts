@@ -56,6 +56,9 @@ export async function scrapeIndex() {
           const agendaEl = columns[3]?.querySelector("a");
           const videoEl = columns[4]?.querySelector("a");
 
+          const agendaViewUrl = agendaEl?.getAttribute("href") || undefined;
+          const videoClickHandler = videoEl?.getAttribute("onclick") || "";
+
           /**
            * This complex regex aims for a fully "correct" parsing of the `window.open`
            * expression to extract the first parameter (the URL). It handles cases where:
@@ -65,16 +68,15 @@ export async function scrapeIndex() {
            *
            * ? For a detailed breakdown, or to change/debug, see: https://regex101.com/r/mdvRB3/1
            */
+          const parser =
+            /^window\.open\((?<quot>['"])(?<url>.+?)(?<!\\)\k<quot>.*\)$/;
+
           const videoViewUrl =
-            /^window\.open\((?<quot>['"])(?<url>.+?)(?<!\\)\k<quot>.*\)$/.exec(
-              videoEl?.getAttribute("onclick") || ""
-            )?.groups?.url ||
+            parser.exec(videoClickHandler)?.groups?.url ||
             videoEl?.getAttribute("href") ||
             undefined;
-          const agendaViewUrl = agendaEl?.getAttribute("href") || undefined;
 
           results.push({
-            viewId: VIEW_ID,
             committee,
             name,
             date,
@@ -118,7 +120,10 @@ export async function scrapeIndex() {
         update: {},
         create: {
           name,
-          rawJson,
+          rawJson: {
+            ...rawJson,
+            viewId: VIEW_ID,
+          },
           startedAt,
           endedAt,
           committee: { connect: committee },

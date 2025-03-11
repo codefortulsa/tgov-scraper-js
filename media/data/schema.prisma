@@ -1,0 +1,62 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters", "metrics"]
+  binaryTargets   = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("MEDIA_DATABASE_URL")
+}
+
+// Models related to media processing
+
+model Blob {
+  id          String   @id @default(ulid())
+  bucket      String
+  key         String
+  mimetype    String
+  url         String?
+  srcUrl      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // External references maintained by ID only
+  meetingRecordId String?
+  
+  // Tasks related to this blob
+  videoProcessingTaskVideos VideoProcessingTask[] @relation("task_video")
+  videoProcessingTaskAudios VideoProcessingTask[] @relation("task_audio")
+}
+
+model VideoProcessingBatch {
+  id             String   @id @default(ulid())
+  status         String   // queued, processing, completed, failed
+  totalTasks     Int
+  completedTasks Int      @default(0)
+  failedTasks    Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  
+  tasks          VideoProcessingTask[]
+}
+
+model VideoProcessingTask {
+  id             String   @id @default(ulid())
+  viewerUrl      String?
+  downloadUrl    String?
+  status         String   // queued, processing, completed, failed
+  extractAudio   Boolean  @default(true)
+  error          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  
+  batchId        String?
+  meetingRecordId String? // Reference to TGov service's MeetingRecord
+  videoId        String?
+  audioId        String?
+  
+  batch          VideoProcessingBatch? @relation(fields: [batchId], references: [id])
+  video          Blob? @relation("task_video", fields: [videoId], references: [id])
+  audio          Blob? @relation("task_audio", fields: [audioId], references: [id])
+}

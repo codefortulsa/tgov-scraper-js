@@ -1,0 +1,432 @@
+helmturner: The current organizational structure lumps everything into a single "archives" service. This is hard to follow, and misses out on many of the benefits ot Encore TS.
+
+Please refactor this project to restructure it into, at minimum, 4 services:
+ - a 'tgov' service which is responsible for
+   - scraping the TGov Index page and saving the results to it's own 'tgov' database
+   - exposing the 'tgov' database via a convenient API
+   - exposing endpoints for looking up and retrieving the video download url
+ - a 'media' service which is responsible for:
+   - exposing endpoints for downloading, storing, processing, and retrieving audio/video (basically anything that requires ffmpeg)
+ - a 'documents' service which is responsible for the retrieval, storage, and lookup of documents such as PDFs, etc.
+
+Each service should have its own database and buckets as necessary. Where services need access to the data from another service, they should delegate by calling the responsible service. This will require splitting the current database schema, but try not to modify the user-facing behavior significantly (if at all).
+
+GitHub Copilot: I'll help you refactor the project into a more modular structure with separate services. Let's first explore the current structure to understand what we're working with, then implement the refactoring.Now I need to understand the current API endpoints and functionality to ensure we maintain the same user-facing behavior while refactoring.Based on the analysis of the codebase, I'll now refactor the project into the requested service architecture. Let's organize it into three primary services: `tgov`, `media`, and `documents`.
+
+First, let me outline the current structure and how we'll reorganize it:
+
+## Current Structure:
+- Single "archives" service with mixed responsibilities:
+  - TGov scraping and data storage
+  - Video downloading and processing
+  - Audio extraction
+  - Document handling
+  - All sharing a single database
+
+## Planned Refactored Structure:
+1. **tgov service**: Responsible for scraping TGov data and providing APIs
+2. **media service**: Responsible for video/audio processing using ffmpeg
+3. **documents service**: Responsible for document handling and storage
+
+Let me start creating these services and refactoring the code.I can now see the directory structure better. Let's proceed with our refactoring plan. Here are the steps I'll take:
+
+1. Create the three new service directories and their respective service files
+2. Split the Prisma schema for each service
+3. Move the relevant functionality to each service
+4. Update import paths and dependencies
+
+Let's start by creating the three basic service directories and files:I've created the basic directory structure for our three new services. Now, let's create the service definition files for each service.
+````
+import { Service } from "encore.dev/service";
+
+/**
+ * TGov service for scraping and providing access to Tulsa Government meeting data
+ * 
+ * This service is responsible for:
+ * - Scraping the TGov index page
+ * - Storing meeting and committee information
+ * - Exposing APIs for accessing meeting data
+ * - Providing methods to extract video download URLs
+ */
+export default new Service("tgov");
+````
+
+
+Made changes.
+
+I'll now create the service definitions for media and documents services:
+````
+import { Service } from "encore.dev/service";
+
+/**
+ * Media service for managing audio and video processing
+ * 
+ * This service is responsible for:
+ * - Downloading videos from URLs
+ * - Extracting audio from videos
+ * - Processing and storing media files
+ * - Providing APIs for media access and conversion
+ */
+export default new Service("media");
+````
+
+
+Made changes.
+
+I'll now create the documents service definition:
+````
+import { Service } from "encore.dev/service";
+
+/**
+ * Documents service for managing document files and metadata
+ * 
+ * This service is responsible for:
+ * - Storing and retrieving document files (PDFs, etc.)
+ * - Managing document metadata
+ * - Providing APIs for document access
+ */
+export default new Service("documents");
+````
+
+
+Made changes.
+
+Now I'll split the Prisma schema into separate schemas for each service. Let's first examine the current schema in more detail to properly split it.I've examined the current Prisma schema, which will help me split it properly for each service. Now I'll create the specific schema files for each service.
+
+Let's start with the TGov service schema:
+````
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters", "metrics"]
+  binaryTargets   = ["native", "debian-openssl-3.0.x"]
+}
+
+generator json {
+  provider   = "prisma-json-types-generator"
+  engineType = "library"
+  output     = "./jsontypes.ts"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("TGOV_DATABASE_URL")
+}
+
+// Models related to TGov meeting data
+
+model Committee {
+  id            String         @id @default(ulid())
+  name          String         @unique
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  meetingRecords MeetingRecord[]
+}
+
+model MeetingRecord {
+  id          String   @id @default(ulid())
+  name        String   @unique
+  startedAt   DateTime @db.Timestamptz(6)
+  endedAt     DateTime @db.Timestamptz(6)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  committeeId String
+  videoViewUrl String?
+  agendaViewUrl String?
+  
+  ///[MeetingRawJSON]
+  rawJson     Json
+
+  // Foreign keys to link with other services
+  videoId     String?
+  audioId     String?
+  agendaId    String?
+  
+  committee   Committee @relation(fields: [committeeId], references: [id])
+  
+  @@unique([committeeId, startedAt])
+}
+````
+
+
+Made changes.
+
+Now I'll create the Media service schema:
+````
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters", "metrics"]
+  binaryTargets   = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("MEDIA_DATABASE_URL")
+}
+
+// Models related to media processing
+
+model Blob {
+  id          String   @id @default(ulid())
+  bucket      String
+  key         String
+  mimetype    String
+  url         String?
+  srcUrl      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // External references maintained by ID only
+  meetingRecordId String?
+  
+  // Tasks related to this blob
+  videoProcessingTaskVideos VideoProcessingTask[] @relation("task_video")
+  videoProcessingTaskAudios VideoProcessingTask[] @relation("task_audio")
+}
+
+model VideoProcessingBatch {
+  id             String   @id @default(ulid())
+  status         String   // queued, processing, completed, failed
+  totalTasks     Int
+  completedTasks Int      @default(0)
+  failedTasks    Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  
+  tasks          VideoProcessingTask[]
+}
+
+model VideoProcessingTask {
+  id             String   @id @default(ulid())
+  viewerUrl      String?
+  downloadUrl    String?
+  status         String   // queued, processing, completed, failed
+  extractAudio   Boolean  @default(true)
+  error          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  
+  batchId        String?
+  meetingRecordId String? // Reference to TGov service's MeetingRecord
+  videoId        String?
+  audioId        String?
+  
+  batch          VideoProcessingBatch? @relation(fields: [batchId], references: [id])
+  video          Blob? @relation("task_video", fields: [videoId], references: [id])
+  audio          Blob? @relation("task_audio", fields: [audioId], references: [id])
+}
+````
+
+
+Made changes.
+
+Now I'll create the Documents service schema:
+````
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters", "metrics"]
+  binaryTargets   = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DOCUMENTS_DATABASE_URL")
+}
+
+// Models related to documents processing and storage
+
+model Document {
+  id          String   @id @default(ulid())
+  bucket      String
+  key         String
+  mimetype    String
+  url         String?
+  srcUrl      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Reference to TGov service's MeetingRecord
+  meetingRecordId String?
+  
+  // Document metadata
+  title       String?
+  description String?
+  fileSize    Int?
+}
+````
+
+
+Made changes.
+
+Now I'll create the database connection modules for each service. Let's start with the tgov service:
+````
+import { SQLDatabase } from "encore.dev/storage/sqldb";
+import { PrismaClient } from "@prisma/client";
+
+// Define the database connection
+const psql = new SQLDatabase("tgov", {
+  migrations: { path: "./migrations", source: "prisma" },
+});
+
+// Initialize Prisma client with the Encore-managed connection string
+export const db = new PrismaClient({ datasourceUrl: psql.connectionString });
+````
+
+
+Made changes.
+
+I'll now create the database connection modules for the media and documents services:
+````
+import { SQLDatabase } from "encore.dev/storage/sqldb";
+import { PrismaClient } from "@prisma/client";
+import { Bucket } from "encore.dev/storage/objects";
+
+// Define the database connection
+const psql = new SQLDatabase("media", {
+  migrations: { path: "./migrations", source: "prisma" },
+});
+
+// Initialize Prisma client with the Encore-managed connection string
+export const db = new PrismaClient({ datasourceUrl: psql.connectionString });
+
+// Create media buckets
+export const recordings = new Bucket("recordings", {
+  versioned: false
+});
+
+export const bucket_meta = new Bucket("bucket-meta", {
+  versioned: false
+});
+````
+
+
+Made changes.
+
+I'll now create the database connection module for the documents service:
+````
+import { SQLDatabase } from "encore.dev/storage/sqldb";
+import { PrismaClient } from "@prisma/client";
+import { Bucket } from "encore.dev/storage/objects";
+
+// Define the database connection
+const psql = new SQLDatabase("documents", {
+  migrations: { path: "./migrations", source: "prisma" },
+});
+
+// Initialize Prisma client with the Encore-managed connection string
+export const db = new PrismaClient({ datasourceUrl: psql.connectionString });
+
+// Create documents bucket
+export const agendas = new Bucket("agendas", {
+  versioned: false
+});
+````
+
+
+Made changes.
+
+Now I'll move the core functionality from the archives service to our new services. Let's start by moving the TGov scraping functionality to the tgov service.I'll now copy and adapt the TGov functionality from the archives service to our new tgov service. Let's start by creating the necessary utility files and browser setup:
+
+Continue to iterate?
+Copilot has been working on this problem for a while. It can continue to iterate, or you can send a new message to refine your prompt.
+
+helmturner: @agent Continue: "Continue to iterate?"
+
+GitHub Copilot: 
+````
+export const tgov_urls = {
+  TGOV_BASE_URL: "https://tulsa-ok.granicus.com",
+  TGOV_INDEX_PATHNAME: "/ViewPublisher.php",
+};
+````
+
+
+Made changes.
+
+I'll continue with the refactoring by implementing the necessary files for each service. Let's move on to creating the browser setup and utility functions for the TGov service.
+````
+import { PuppeteerLaunchOptions } from "puppeteer";
+
+// Default launch options for Puppeteer
+export const launchOptions: PuppeteerLaunchOptions = {
+  args: ["--disable-features=HttpsFirstBalancedModeAutoEnable"],
+};
+
+// Use chromium path from environment if available
+if (process.env.CHROMIUM_PATH) {
+  launchOptions.executablePath = process.env.CHROMIUM_PATH;
+}
+````
+
+
+Made changes.
+
+Let's create the utility functions for the TGov service next. These utilities will help with date normalization and other common tasks.
+````
+import { parse, addHours, addMinutes } from "date-fns";
+import { tz } from "@date-fns/tz";
+
+/**
+ * Types for TGov-specific data
+ */
+export interface TGovDateInfo {
+  date: string;
+  duration: string;
+}
+
+/**
+ * Normalize a scraped name into its canonical form (as used in the database).
+ * - Removes all non-word characters except for dashes "-"
+ * - Converts to lowercase
+ * - Replaces each group of contiguous spaces with a single dash
+ * @param name - The name to normalize (e.g. a committee name, meeting name, etc.)
+ */
+export function normalizeName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, "")
+    .replace(/\s+/g, "-");
+}
+
+/**
+ * Extract startedAt and endedAt timestamps from raw TGov date info
+ * Times on TGov's website are implicitly in the America/Chicago timezone
+ * 
+ * @param raw The raw date information from TGov
+ * @returns Object containing normalized startedAt and endedAt timestamps
+ */
+export function normalizeDate(raw: TGovDateInfo): {
+  startedAt: Date;
+  endedAt: Date;
+} {
+  const timeZone = "America/Chicago";
+  const durationFormat = /(?<hours>\d+?h)\s+?(?<minutes>\d+?)m/;
+
+  const start = parse(
+    raw.date,
+    "MMMM d, y - h:mm a",
+    new Intl.DateTimeFormat("en-US", { timeZone }).format(Date.now()),
+    { locale: undefined, timeZone }
+  );
+
+  let end;
+  let { groups: duration } = raw.duration.match(durationFormat) || {};
+
+  if (!duration) console.warn("Failed to parse duration", raw.duration);
+  duration ??= { hours: "0h", minutes: "0m" };
+
+  // Extract just the number from "5h" -> 5
+  const hours = parseInt(duration.hours);
+  const minutes = parseInt(duration.minutes);
+  
+  // Calculate the end time by adding the duration to the start time
+  end = new Date(start);
+  end = addHours(end, hours);
+  end = addMinutes(end, minutes);
+
+  return { startedAt: start, endedAt: end };
+}
+````
+
+
+Made changes.
