@@ -10,7 +10,7 @@ import logger from "encore.dev/log";
 import { downloadVideo } from "./downloader";
 import { extractAudioTrack } from "./extractor";
 import { db, recordings, bucket_meta } from "./data";
-import filetypes from "./filetypes";
+import { fileTypeFromBuffer } from "file-type";
 
 export interface ProcessingOptions {
   filename?: string;
@@ -117,20 +117,26 @@ async function uploadAndSaveToDb(
 ): Promise<ProcessedMediaResult> {
   // Read files and get their content types
   const videoBuffer = await fs.readFile(videoPath);
-  const videoType = "video/mp4";
+  // Use file-type to detect the actual mimetype of the video
+  const videoTypeResult = await fileTypeFromBuffer(videoBuffer);
+  const videoType = videoTypeResult?.mime || "application/octet-stream";
+  logger.info(`Detected video mimetype: ${videoType}`);
 
   let audioBuffer: Buffer | undefined;
   let audioType: string | undefined;
 
   if (audioPath) {
     audioBuffer = await fs.readFile(audioPath);
-    audioType = "audio/mp3";
+    // Use file-type to detect the actual mimetype of the audio
+    const audioTypeResult = await fileTypeFromBuffer(audioBuffer);
+    audioType = audioTypeResult?.mime || "application/octet-stream";
+    logger.info(`Detected audio mimetype: ${audioType}`);
   }
 
   // Upload to cloud storage
   const [videoAttrs, audioAttrs] = await Promise.all([
     recordings.upload(videoKey, videoBuffer, { contentType: videoType }),
-    audioBuffer
+    audioBuffer && audioType
       ? recordings.upload(audioKey, audioBuffer, { contentType: audioType })
       : Promise.resolve(null),
   ]);
@@ -155,7 +161,7 @@ async function uploadAndSaveToDb(
         bucket: "recordings",
         key: audioKey,
         mimetype: audioType,
-        url: audioAttrs ? recordings.objectUrl(audioKey) : undefined,
+        url: audioAttrs ? recordings.publicUrl(audioKey) : undefined,
         srcUrl: sourceUrl,
         meetingRecordId,
         size: audioAttrs?.size,

@@ -12,5 +12,6 @@ export const db = new PrismaClient({ datasourceUrl: psql.connectionString });
 
 // Create documents bucket
 export const agendas = new Bucket("agendas", {
-  versioned: false
+  versioned: false,
+  public: true,
 });

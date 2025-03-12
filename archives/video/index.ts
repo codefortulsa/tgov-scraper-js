@@ -10,6 +10,7 @@ import fs from "fs/promises";
 import { db, agendas,bucket_meta,recordings } from "../data";
 import crypto from "crypto";
 import logger from "encore.dev/log";
+import { fileTypeFromBuffer } from "file-type";
 import { downloadVideo } from "./downloader";
 import { extractAudioTrack, extractVideoTrack } from "./extractor";
 import { createVideoStream, createAudioStream, createCombinedStream } from "./streamer";
@@ -111,17 +112,35 @@ async function uploadAndSaveToDb(
 ): Promise<ProcessedVideoResult> {
   logger.info(`Uploading video and audio files to storage`);
   
-  // Read video file
+  // Read video file and detect its mimetype
   const videoBuffer = await fs.readFile(videoPath);
+  const videoTypeResult = await fileTypeFromBuffer(videoBuffer);
+  const videoMimetype = videoTypeResult?.mime || "application/octet-stream";
+  logger.info(`Detected video mimetype: ${videoMimetype}`);
   
   // Upload video to bucket
-  await recordings.upload(videoKey, videoBuffer);
+  await recordings.upload(videoKey, videoBuffer, { contentType: videoMimetype });
   const videoUrl = recordings.publicUrl(videoKey);
   logger.info(`Uploaded video to ${videoUrl}`);
   
   let videoBlob;
   let audioBlob;
-  let audioUrl: string;
+  let audioUrl: string | undefined;
+  let audioMimetype: string | undefined;
+  let audioBuffer: Buffer | undefined;
+  
+  // Read audio file if it exists
+  if (audioPath) {
+    audioBuffer = await fs.readFile(audioPath);
+    const audioTypeResult = await fileTypeFromBuffer(audioBuffer);
+    audioMimetype = audioTypeResult?.mime || "application/octet-stream";
+    logger.info(`Detected audio mimetype: ${audioMimetype}`);
+    
+    // Upload audio to bucket
+    await recordings.upload(audioKey, audioBuffer, { contentType: audioMimetype });
+    audioUrl = recordings.publicUrl(audioKey);
+    logger.info(`Uploaded audio to ${audioUrl}`);
+  }
   
   // Save to database in a transaction
   const result = await db.$transaction(async (tx) => {
@@ -129,7 +148,7 @@ async function uploadAndSaveToDb(
     videoBlob = await tx.blob.create({
       data: {
         key: videoKey,
-        mimetype: "video/mp4",
+        mimetype: videoMimetype,
         url: videoUrl,
         bucket: bucket_meta.RECORDINGS_BUCKET_NAME,
         srcUrl: sourceUrl
@@ -140,18 +159,11 @@ async function uploadAndSaveToDb(
     let audioBlob = undefined;
     
     // If audio was extracted, save it too
-    if (audioPath) {
-      const audioBuffer = await fs.readFile(audioPath);
-      
-      // Upload audio to bucket
-      await recordings.upload(audioKey, audioBuffer);
-      audioUrl = recordings.publicUrl(audioKey);
-      logger.info(`Uploaded audio to ${audioUrl}`);
-      
+    if (audioPath && audioBuffer && audioMimetype && audioUrl) {
       audioBlob = await tx.blob.create({
         data: {
           key: audioKey,
-          mimetype: "audio/mp3",
+          mimetype: audioMimetype,
           url: audioUrl,
           bucket: bucket_meta.RECORDINGS_BUCKET_NAME,
           srcUrl: sourceUrl

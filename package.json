@@ -11,7 +11,10 @@
     "build": "cd frontend && npx astro build",
     "db:gen": "npx prisma generate --schema ./archives/data/schema.prisma",
     "db:push": "npx prisma db push --schema ./archives/data/schema.prisma",
-    "db:migrate": "npx prisma migrate dev --schema ./archives/data/schema.prisma"
+    "db:migrate:media": "npx prisma migrate dev --schema ./media/data/schema.prisma",
+    "db:migrate:documents": "npx prisma migrate dev --schema ./documents/data/schema.prisma",
+    "db:migrate:tgov": "npx prisma migrate dev --schema ./tgov/data/schema.prisma",
+    "db:migrate:archives": "npx prisma migrate dev --schema ./archives/data/schema.prisma"
   },
   "devDependencies": {
     "@types/fluent-ffmpeg": "^2.1.27",
