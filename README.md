@@ -20,6 +20,11 @@ This application is structured as a set of microservices, each with its own resp
 - Handles document storage and retrieval
 - Links documents to meeting records
 
+### 4. Transcription Service
+- Converts audio files to text using the OpenAI Whisper API
+- Stores and retrieves transcriptions with time-aligned segments
+- Manages transcription jobs
+
 For more details, see the [architecture documentation](./docs/architecture.md).
 
 ## Getting Started
@@ -29,6 +34,7 @@ For more details, see the [architecture documentation](./docs/architecture.md).
 - Node.js LTS and npm
 - [Encore CLI](https://encore.dev/docs/install)
 - ffmpeg (for video processing)
+- OpenAI API key (for transcription)
 
 ### Setup
 
@@ -48,11 +54,13 @@ npm install
 npx ts-node setup.ts
 ```
 
-4. Update the `.env` file with your database credentials:
+4. Update the `.env` file with your database credentials and API keys:
 ```
 TGOV_DATABASE_URL="postgresql://username:password@localhost:5432/tgov?sslmode=disable"
 MEDIA_DATABASE_URL="postgresql://username:password@localhost:5432/media?sslmode=disable"
 DOCUMENTS_DATABASE_URL="postgresql://username:password@localhost:5432/documents?sslmode=disable"
+TRANSCRIPTION_DATABASE_URL="postgresql://username:password@localhost:5432/transcription?sslmode=disable"
+OPENAI_API_KEY="your-openai-api-key"
 ```
 
 5. Run the application using Encore CLI:
@@ -92,6 +100,15 @@ encore run
 | `/api/documents/:id` | GET | Get a specific document |
 | `/api/documents/:id` | PATCH | Update document metadata |
 | `/api/meeting-documents` | POST | Download and link meeting agenda documents |
+
+### Transcription Service
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/transcribe` | POST | Request transcription for an audio file |
+| `/jobs/:jobId` | GET | Get the status of a transcription job |
+| `/transcriptions/:transcriptionId` | GET | Get a transcription by ID |
+| `/meetings/:meetingId/transcriptions` | GET | Get all transcriptions for a meeting |
 
 ## Cron Jobs
 

@@ -24,7 +24,13 @@ const Env = v.looseObject({
     v.url(),
     v.regex(/^postgresql:\/\/.*?sslmode=disable$/),
   ),
+  TRANSCRIPTION_DATABASE_URL: v.pipe(
+    v.string(),
+    v.url(),
+    v.regex(/^postgresql:\/\/.*?sslmode=disable$/),
+  ),
   CHROMIUM_PATH: v.optional(v.string()),
+  OPENAI_API_KEY: v.string(),
 });
 
 const env = v.parse(Env, process.env);
