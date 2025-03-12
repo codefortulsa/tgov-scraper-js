@@ -7,7 +7,7 @@ generator client {
 generator json {
   provider = "prisma-json-types-generator"
   engineType = "library"
-  output = "./json-types.ts"
+  output = "./jsontypes.ts"
 }
 
 datasource db {
