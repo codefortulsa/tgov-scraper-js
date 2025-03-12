@@ -1,7 +1,7 @@
-import { PuppeteerLaunchOptions } from "puppeteer";
+import { LaunchOptions } from "puppeteer";
 
 // Default launch options for Puppeteer
-export const launchOptions: PuppeteerLaunchOptions = {
+export const launchOptions: LaunchOptions = {
   args: ["--disable-features=HttpsFirstBalancedModeAutoEnable"],
 };
 

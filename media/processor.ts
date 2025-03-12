@@ -1,6 +1,6 @@
 /**
  * Media Processor Module
- * 
+ *
  * Provides high-level functions for downloading, processing, and storing media files
  */
 import fs from "fs/promises";
@@ -10,6 +10,7 @@ import logger from "encore.dev/log";
 import { downloadVideo } from "./downloader";
 import { extractAudioTrack } from "./extractor";
 import { db, recordings, bucket_meta } from "./data";
+import filetypes from "./filetypes";
 
 export interface ProcessingOptions {
   filename?: string;
@@ -28,50 +29,59 @@ export interface ProcessedMediaResult {
 
 /**
  * Process a video from a URL, with options to download and save directly to cloud storage
- * 
+ *
  * @param url The m3u8 URL or other video URL to process
  * @param options Processing options
  * @returns Database IDs and URLs for the processed files
  */
-export async function processMedia(url: string, options: ProcessingOptions = {}): Promise<ProcessedMediaResult> {
+export async function processMedia(
+  url: string,
+  options: ProcessingOptions = {}
+): Promise<ProcessedMediaResult> {
   const {
     filename = `video_${Date.now()}`,
     extractAudio = false,
-    meetingRecordId
+    meetingRecordId,
   } = options;
 
   // Generate unique keys for cloud storage
-  const videoFilename = `${filename}.mp4`;
-  const audioFilename = `${filename}.mp3`;
-  
+  const videoFilename = `${filename}_video`;
+  const audioFilename = `${filename}_audio`;
+
   // Hash the URL to use as part of the key
-  const urlHash = crypto.createHash("sha256").update(url).digest("base64url").substring(0, 12);
+  const urlHash = crypto
+    .createHash("sha256")
+    .update(url)
+    .digest("base64url")
+    .substring(0, 12);
   const videoKey = `${urlHash}_${videoFilename}`;
   const audioKey = `${urlHash}_${audioFilename}`;
-  
+
   logger.info(`Processing media from ${url}`);
   logger.info(`Video key: ${videoKey}`);
   if (extractAudio) logger.info(`Audio key: ${audioKey}`);
-  
+
   // Create a temporary directory for processing if needed
   const tempDir = `/tmp/${Date.now()}_${urlHash}`;
   const videoTempPath = `${tempDir}/${videoFilename}`;
-  const audioTempPath = extractAudio ? `${tempDir}/${audioFilename}` : undefined;
+  const audioTempPath = extractAudio
+    ? `${tempDir}/${audioFilename}`
+    : undefined;
 
   try {
     // Create temp directory
     await fs.mkdir(tempDir, { recursive: true });
-    
+
     // Step 1: Download the video to temporary location
     logger.info(`Downloading video to temp location: ${videoTempPath}`);
     await downloadVideo(url, videoTempPath);
-    
+
     // Step 2: Extract audio if requested
     if (extractAudio && audioTempPath) {
       logger.info(`Extracting audio to temp location: ${audioTempPath}`);
       await extractAudioTrack(videoTempPath, audioTempPath);
     }
-    
+
     // Step 3: Upload files to storage and save to database
     const result = await uploadAndSaveToDb(
       videoTempPath,
@@ -81,7 +91,7 @@ export async function processMedia(url: string, options: ProcessingOptions = {})
       url,
       meetingRecordId
     );
-    
+
     return result;
   } finally {
     // Clean up temporary files
@@ -108,33 +118,36 @@ async function uploadAndSaveToDb(
   // Read files and get their content types
   const videoBuffer = await fs.readFile(videoPath);
   const videoType = "video/mp4";
-  
+
   let audioBuffer: Buffer | undefined;
   let audioType: string | undefined;
-  
+
   if (audioPath) {
     audioBuffer = await fs.readFile(audioPath);
     audioType = "audio/mp3";
   }
-  
+
   // Upload to cloud storage
-  const [videoAttrs] = await Promise.all([
+  const [videoAttrs, audioAttrs] = await Promise.all([
     recordings.upload(videoKey, videoBuffer, { contentType: videoType }),
-    audioBuffer ? recordings.upload(audioKey, audioBuffer, { contentType: audioType }) : Promise.resolve(null)
+    audioBuffer
+      ? recordings.upload(audioKey, audioBuffer, { contentType: audioType })
+      : Promise.resolve(null),
   ]);
-  
+
   // Save metadata to database
   const videoBlob = await db.blob.create({
     data: {
       bucket: "recordings",
       key: videoKey,
       mimetype: videoType,
-      url: videoAttrs.objectUrl,
+      url: recordings.publicUrl(videoKey),
       srcUrl: sourceUrl,
       meetingRecordId,
-    }
+      size: videoAttrs.size,
+    },
   });
-  
+
   let audioBlob;
   if (audioBuffer && audioType) {
     audioBlob = await db.blob.create({
@@ -142,19 +155,20 @@ async function uploadAndSaveToDb(
         bucket: "recordings",
         key: audioKey,
         mimetype: audioType,
-        url: recordings.objectUrl(audioKey),
+        url: audioAttrs ? recordings.objectUrl(audioKey) : undefined,
         srcUrl: sourceUrl,
         meetingRecordId,
-      }
+        size: audioAttrs?.size,
+      },
     });
   }
-  
+
   return {
     videoId: videoBlob.id,
     audioId: audioBlob?.id,
     videoUrl: videoBlob.url || undefined,
     audioUrl: audioBlob?.url || undefined,
     videoMimetype: videoBlob.mimetype,
-    audioMimetype: audioBlob?.mimetype
+    audioMimetype: audioBlob?.mimetype,
   };
 }
