@@ -9,7 +9,7 @@
     "test": "vitest",
     "gen": "encore gen client --output=./frontend/app/lib/client.ts --env=local",
     "build": "cd frontend && npx astro build",
-    "db:gen": "npx concurrently db:gen:*",
+    "db:gen": "npx concurrently node:db:gen:*",
     "db:gen:archives": "npx prisma generate --schema ./archives/data/schema.prisma",
     "db:gen:media": "npx prisma generate --schema ./media/data/schema.prisma",
     "db:gen:documents": "npx prisma generate --schema ./documents/data/schema.prisma",
