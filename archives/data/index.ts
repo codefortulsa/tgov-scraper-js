@@ -3,7 +3,7 @@
  */
 import { Bucket } from "encore.dev/storage/objects";
 import { SQLDatabase } from "encore.dev/storage/sqldb";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "@prisma/client/archives";
 
 /**
  * Encore's Bucket definitions require string literals, so we have to define

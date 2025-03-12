@@ -2,6 +2,7 @@ generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["driverAdapters", "metrics"]
   binaryTargets   = ["native", "debian-openssl-3.0.x"]
+  output          = "../../node_modules/@prisma/client/tgov"
 }
 
 generator json {

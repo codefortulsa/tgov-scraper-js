@@ -1,5 +1,5 @@
 import { SQLDatabase } from "encore.dev/storage/sqldb";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "@prisma/client/documents";
 import { Bucket } from "encore.dev/storage/objects";
 
 // Define the database connection
