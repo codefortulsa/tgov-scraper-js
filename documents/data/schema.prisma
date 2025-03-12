@@ -12,7 +12,7 @@ datasource db {
 
 // Models related to documents processing and storage
 
-model Document {
+model DocumentFile {
   id          String   @id @default(ulid())
   bucket      String
   key         String

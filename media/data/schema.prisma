@@ -12,7 +12,7 @@ datasource db {
 
 // Models related to media processing
 
-model Blob {
+model MediaFile {
   id          String   @id @default(ulid())
   bucket      String
   key         String
@@ -25,7 +25,12 @@ model Blob {
   // External references maintained by ID only
   meetingRecordId String?
   
-  // Tasks related to this blob
+  // MediaFile metadata
+  title       String?
+  description String?
+  fileSize    Int?
+  
+  // Tasks related to this media file
   videoProcessingTaskVideos VideoProcessingTask[] @relation("task_video")
   videoProcessingTaskAudios VideoProcessingTask[] @relation("task_audio")
 }
@@ -58,6 +63,6 @@ model VideoProcessingTask {
   audioId        String?
   
   batch          VideoProcessingBatch? @relation(fields: [batchId], references: [id])
-  video          Blob? @relation("task_video", fields: [videoId], references: [id])
-  audio          Blob? @relation("task_audio", fields: [audioId], references: [id])
+  video          MediaFile? @relation("task_video", fields: [videoId], references: [id])
+  audio          MediaFile? @relation("task_audio", fields: [audioId], references: [id])
 }

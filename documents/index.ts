@@ -77,7 +77,7 @@ export const downloadDocument = api(
       });
       
       // Save metadata to database
-      const document = await db.document.create({
+      const documentFile = await db.documentFile.create({
         data: {
           bucket: "agendas",
           key: documentKey,
@@ -91,13 +91,13 @@ export const downloadDocument = api(
         },
       });
       
-      logger.info(`Document saved with ID: ${document.id}`);
+      logger.info(`Document saved with ID: ${documentFile.id}`);
       
       return {
-        id: document.id,
-        url: document.url || undefined,
-        title: document.title || undefined,
-        mimetype: document.mimetype,
+        id: documentFile.id,
+        url: documentFile.url || undefined,
+        title: documentFile.title || undefined,
+        mimetype: documentFile.mimetype,
       };
     } catch (error: any) {
       logger.error(`Error downloading document: ${error.message}`);
@@ -135,18 +135,18 @@ export const listDocuments = api(
     
     const where = meetingRecordId ? { meetingRecordId } : {};
     
-    const [documents, total] = await Promise.all([
-      db.document.findMany({
+    const [documentFiles, total] = await Promise.all([
+      db.documentFile.findMany({
         where,
         take: limit,
         skip: offset,
         orderBy: { createdAt: "desc" },
       }),
-      db.document.count({ where }),
+      db.documentFile.count({ where }),
     ]);
     
     return {
-      documents: documents.map(doc => ({
+      documents: documentFiles.map(doc => ({
         id: doc.id,
         title: doc.title || undefined,
         description: doc.description || undefined,
@@ -181,23 +181,23 @@ export const getDocument = api(
   }> => {
     const { id } = params;
     
-    const document = await db.document.findUnique({
+    const documentFile = await db.documentFile.findUnique({
       where: { id },
     });
     
-    if (!document) {
+    if (!documentFile) {
       throw new Error(`Document with ID ${id} not found`);
     }
     
     return {
-      id: document.id,
-      title: document.title || undefined,
-      description: document.description || undefined,
-      url: document.url || undefined,
-      mimetype: document.mimetype,
-      fileSize: document.fileSize || undefined,
-      createdAt: document.createdAt,
-      meetingRecordId: document.meetingRecordId || undefined,
+      id: documentFile.id,
+      title: documentFile.title || undefined,
+      description: documentFile.description || undefined,
+      url: documentFile.url || undefined,
+      mimetype: documentFile.mimetype,
+      fileSize: documentFile.fileSize || undefined,
+      createdAt: documentFile.createdAt,
+      meetingRecordId: documentFile.meetingRecordId || undefined,
     };
   }
 );
@@ -224,7 +224,7 @@ export const updateDocument = api(
       Object.entries(updates).filter(([_, v]) => v !== undefined)
     );
     
-    await db.document.update({
+    await db.documentFile.update({
       where: { id },
       data,
     });

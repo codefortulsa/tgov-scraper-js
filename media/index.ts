@@ -96,25 +96,28 @@ export const downloadVideos = api(
 export const getMediaInfo = api(
   {
     method: "GET",
-    path: "/api/media/:blobId/info",
+    path: "/api/media/:mediaFileId/info",
     expose: true,
   },
-  async ({ blobId }: { blobId: string }) => {
-    const blob = await db.blob.findUnique({
-      where: { id: blobId },
+  async ({ mediaFileId }: { mediaFileId: string }) => {
+    const mediaFile = await db.mediaFile.findUnique({
+      where: { id: mediaFileId },
     });
 
-    if (!blob) {
-      throw new Error(`Media with ID ${blobId} not found`);
+    if (!mediaFile) {
+      throw new Error(`Media with ID ${mediaFileId} not found`);
     }
 
     return {
-      id: blob.id,
-      url: blob.url,
-      mimetype: blob.mimetype,
-      key: blob.key,
-      bucket: blob.bucket,
-      createdAt: blob.createdAt,
+      id: mediaFile.id,
+      url: mediaFile.url,
+      mimetype: mediaFile.mimetype,
+      key: mediaFile.key,
+      bucket: mediaFile.bucket,
+      createdAt: mediaFile.createdAt,
+      title: mediaFile.title,
+      description: mediaFile.description,
+      fileSize: mediaFile.fileSize,
     };
   }
 );
@@ -129,7 +132,7 @@ export const listVideos = api(
     expose: true,
   },
   async ({ limit = 10, offset = 0 }: { limit?: number; offset?: number }) => {
-    const videos = await db.blob.findMany({
+    const videos = await db.mediaFile.findMany({
       where: { mimetype: { startsWith: "video/" } },
       take: limit,
       skip: offset,
@@ -143,6 +146,9 @@ export const listVideos = api(
       key: video.key,
       bucket: video.bucket,
       createdAt: video.createdAt,
+      title: video.title,
+      description: video.description,
+      fileSize: video.fileSize,
     }));
   }
 );
@@ -157,7 +163,7 @@ export const listAudio = api(
     expose: true,
   },
   async ({ limit = 10, offset = 0 }: { limit?: number; offset?: number }) => {
-    const audioFiles = await db.blob.findMany({
+    const audioFiles = await db.mediaFile.findMany({
       where: { mimetype: { startsWith: "audio/" } },
       take: limit,
       skip: offset,
@@ -171,6 +177,9 @@ export const listAudio = api(
       key: audio.key,
       bucket: audio.bucket,
       createdAt: audio.createdAt,
+      title: audio.title,
+      description: audio.description,
+      fileSize: audio.fileSize,
     }));
   }
 );

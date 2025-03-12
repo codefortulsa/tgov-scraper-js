@@ -142,7 +142,7 @@ async function uploadAndSaveToDb(
   ]);
 
   // Save metadata to database
-  const videoBlob = await db.blob.create({
+  const videoFile = await db.mediaFile.create({
     data: {
       bucket: "recordings",
       key: videoKey,
@@ -150,13 +150,15 @@ async function uploadAndSaveToDb(
       url: recordings.publicUrl(videoKey),
       srcUrl: sourceUrl,
       meetingRecordId,
-      size: videoAttrs.size,
+      fileSize: videoAttrs.size,
+      title: `Video ${new Date().toISOString().split('T')[0]}`,
+      description: `Video processed from ${sourceUrl}`,
     },
   });
 
-  let audioBlob;
+  let audioFile;
   if (audioBuffer && audioType) {
-    audioBlob = await db.blob.create({
+    audioFile = await db.mediaFile.create({
       data: {
         bucket: "recordings",
         key: audioKey,
@@ -164,17 +166,19 @@ async function uploadAndSaveToDb(
         url: audioAttrs ? recordings.publicUrl(audioKey) : undefined,
         srcUrl: sourceUrl,
         meetingRecordId,
-        size: audioAttrs?.size,
+        fileSize: audioAttrs?.size,
+        title: `Audio ${new Date().toISOString().split('T')[0]}`,
+        description: `Audio extracted from ${sourceUrl}`,
       },
     });
   }
 
   return {
-    videoId: videoBlob.id,
-    audioId: audioBlob?.id,
-    videoUrl: videoBlob.url || undefined,
-    audioUrl: audioBlob?.url || undefined,
-    videoMimetype: videoBlob.mimetype,
-    audioMimetype: audioBlob?.mimetype,
+    videoId: videoFile.id,
+    audioId: audioFile?.id,
+    videoUrl: videoFile.url || undefined,
+    audioUrl: audioFile?.url || undefined,
+    videoMimetype: videoFile.mimetype,
+    audioMimetype: audioFile?.mimetype,
   };
 }

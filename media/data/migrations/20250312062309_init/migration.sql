@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "Blob" (
+CREATE TABLE "MediaFile" (
     "id" TEXT NOT NULL,
     "bucket" TEXT NOT NULL,
     "key" TEXT NOT NULL,
@@ -9,8 +9,11 @@ CREATE TABLE "Blob" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "meetingRecordId" TEXT,
+    "title" TEXT,
+    "description" TEXT,
+    "fileSize" INTEGER,
 
-    CONSTRAINT "Blob_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "MediaFile_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -48,7 +51,7 @@ CREATE TABLE "VideoProcessingTask" (
 ALTER TABLE "VideoProcessingTask" ADD CONSTRAINT "VideoProcessingTask_batchId_fkey" FOREIGN KEY ("batchId") REFERENCES "VideoProcessingBatch"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "VideoProcessingTask" ADD CONSTRAINT "VideoProcessingTask_videoId_fkey" FOREIGN KEY ("videoId") REFERENCES "Blob"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "VideoProcessingTask" ADD CONSTRAINT "VideoProcessingTask_videoId_fkey" FOREIGN KEY ("videoId") REFERENCES "MediaFile"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "VideoProcessingTask" ADD CONSTRAINT "VideoProcessingTask_audioId_fkey" FOREIGN KEY ("audioId") REFERENCES "Blob"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "VideoProcessingTask" ADD CONSTRAINT "VideoProcessingTask_audioId_fkey" FOREIGN KEY ("audioId") REFERENCES "MediaFile"("id") ON DELETE SET NULL ON UPDATE CASCADE;

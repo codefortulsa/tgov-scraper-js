@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "Document" (
+CREATE TABLE "DocumentFile" (
     "id" TEXT NOT NULL,
     "bucket" TEXT NOT NULL,
     "key" TEXT NOT NULL,
@@ -13,5 +13,5 @@ CREATE TABLE "Document" (
     "description" TEXT,
     "fileSize" INTEGER,
 
-    CONSTRAINT "Document_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "DocumentFile_pkey" PRIMARY KEY ("id")
 );
