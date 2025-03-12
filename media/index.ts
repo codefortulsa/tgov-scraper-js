@@ -6,11 +6,13 @@
  * - Process videos (extract audio)
  * - Retrieve processed videos and audio
  */
+import crypto from "crypto";
+
+import { db } from "./data";
+import { processMedia } from "./processor";
+
 import { api } from "encore.dev/api";
 import logger from "encore.dev/log";
-import crypto from "crypto";
-import { db } from "./data";
-import { processMedia, ProcessedMediaResult } from "./processor";
 
 // Interface for downloading videos endpoints
 interface DownloadRequest {
@@ -87,7 +89,7 @@ export const downloadVideos = api(
     }
 
     return { results };
-  }
+  },
 );
 
 /**
@@ -119,7 +121,7 @@ export const getMediaInfo = api(
       description: mediaFile.description,
       fileSize: mediaFile.fileSize,
     };
-  }
+  },
 );
 
 /**
@@ -150,7 +152,7 @@ export const listVideos = api(
       description: video.description,
       fileSize: video.fileSize,
     }));
-  }
+  },
 );
 
 /**
@@ -181,5 +183,5 @@ export const listAudio = api(
       description: audio.description,
       fileSize: audio.fileSize,
     }));
-  }
+  },
 );

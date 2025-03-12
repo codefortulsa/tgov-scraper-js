@@ -1,4 +1,14 @@
 {
     "typescript.tsdk": "node_modules/typescript/lib",
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true,
+    "editor.formatOnSaveMode": "file",
+    // Show a line for the prettier print width
+    "editor.rulers": [80, 120],
+    // Helps in edge-cases where prettier fails to resolve the config
+    "prettier.requireConfig": true,
+    // https://github.com/withastro/prettier-plugin-astro/blob/main/README.md#formatting-with-the-vs-code-prettier-extension-directly
+    "prettier.documentSelectors": ["**/*.astro"],
+    "astro.content-intellisense": true,  
     "[prisma]": { "editor.defaultFormatter": "Prisma.prisma" },
 }

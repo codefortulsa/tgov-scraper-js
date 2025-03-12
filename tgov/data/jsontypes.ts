@@ -8,6 +8,7 @@ declare global {
       date: string;
       duration: string;
       viewId: string;
+      clipId?: string;
       agendaViewUrl: string | undefined;
       videoViewUrl: string | undefined;
     };
@@ -16,8 +17,8 @@ declare global {
       name: string;
       message: string;
       stack?: string;
-    }>
+    }>;
   }
 }
 
-export {}
+export {};

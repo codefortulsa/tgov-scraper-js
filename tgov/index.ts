@@ -1,11 +1,12 @@
-import { CronJob } from "encore.dev/cron";
-import { api } from "encore.dev/api";
-import logger from 'encore.dev/log';
-import puppeteer from "puppeteer";
-
 import { launchOptions } from "./browser";
-import { scrapeIndex } from "./scrape";
 import { db } from "./data";
+import { scrapeIndex } from "./scrape";
+
+import { api } from "encore.dev/api";
+import { CronJob } from "encore.dev/cron";
+import logger from "encore.dev/log";
+
+import puppeteer from "puppeteer";
 
 /**
  * Scrape the Tulsa Government (TGov) index page for new meeting information.
@@ -32,7 +33,7 @@ export const scrape = api(
       });
 
     return result;
-  }
+  },
 );
 
 /**
@@ -46,7 +47,7 @@ export const dailyTgovScrape = new CronJob("daily-tgov-scrape", {
 
 /**
  * Extracts video URL from a TGov viewer page
- * 
+ *
  * The TGov website doesn't provide direct video URLs. This endpoint accepts
  * a viewer page URL and returns the actual video URL that can be downloaded.
  */
@@ -90,7 +91,7 @@ export const extractVideoUrl = api(
       logger.error(`Failed to extract video URL: ${error}`);
       throw error;
     }
-  }
+  },
 );
 
 /**
@@ -140,7 +141,7 @@ export const listMeetings = api(
     ]);
 
     return {
-      meetings: meetings.map(meeting => ({
+      meetings: meetings.map((meeting) => ({
         id: meeting.id,
         name: meeting.name,
         startedAt: meeting.startedAt,
@@ -157,7 +158,7 @@ export const listMeetings = api(
       })),
       total,
     };
-  }
+  },
 );
 
 /**
@@ -181,10 +182,14 @@ export const listCommittees = api(
     });
 
     return {
-      committees: committees.map(committee => ({
+      committees: committees.map((committee) => ({
         id: committee.id,
         name: committee.name,
       })),
     };
-  }
+  },
 );
+
+/**
+ * TODO: Endpoint to get all media files for a meeting?
+ */

@@ -1,18 +1,21 @@
-import logger from "encore.dev/log";
-import puppeteer from "puppeteer";
-
-import { tgov_urls } from "./constants";
-import { normalizeDate, normalizeName } from "./util";
-import { db } from "./data";
 import { launchOptions } from "./browser";
+import { tgov_urls } from "./constants";
+import { db } from "./data";
+import { normalizeDate, normalizeName } from "./util";
+
+import logger from "encore.dev/log";
+
+import puppeteer from "puppeteer";
 
 /**
  * Scrapes the TGov index page for meeting information
- * 
+ *
  * This function is responsible for extracting committee names,
  * meeting dates, durations, agenda URLs, and video URLs from
  * the TGov website and storing them in the database.
- * 
+ *
+ * ! — this particular scraper is only suited for view 4, currently
+ *
  * @returns {Promise<void>} A promise that resolves when scraping is complete
  */
 export async function scrapeIndex(): Promise<void> {
@@ -32,13 +35,13 @@ export async function scrapeIndex(): Promise<void> {
 
     const yearsContent = Array.from(
       document.querySelectorAll(
-        ".TabbedPanelsContentGroup .TabbedPanelsContent"
-      )
+        ".TabbedPanelsContentGroup .TabbedPanelsContent",
+      ),
     );
 
     for (const contentDiv of yearsContent) {
       const collapsibles = Array.from(
-        contentDiv.querySelectorAll(".CollapsiblePanel")
+        contentDiv.querySelectorAll(".CollapsiblePanel"),
       );
 
       for (const panel of collapsibles) {
@@ -51,7 +54,7 @@ export async function scrapeIndex(): Promise<void> {
         }
 
         const rows = Array.from(
-          panel.querySelectorAll(".listingTable tbody .listingRow")
+          panel.querySelectorAll(".listingTable tbody .listingRow"),
         );
 
         for (const row of rows) {
@@ -71,17 +74,27 @@ export async function scrapeIndex(): Promise<void> {
            *
            *  - The URL is wrapped in either single or double quotes
            *  - Escaped quotes are used within the URL
+           *
+           * ? For a detailed breakdown, or to change/debug, see: https://regex101.com/r/mdvRB3/1
            */
           const videoViewUrl =
             /^window\.open\((?<quot>['"])(?<url>.+?)(?<!\\)\k<quot>.*\)$/.exec(
-              videoEl?.getAttribute("onclick") || ""
+              videoEl?.getAttribute("onclick") || "",
             )?.groups?.url ||
             videoEl?.getAttribute("href") ||
             undefined;
           const agendaViewUrl = agendaEl?.getAttribute("href") || undefined;
 
+          let clipId;
+
+          try {
+            const parsedUrl = new URL(videoViewUrl || agendaViewUrl || "");
+            const clipIdParam = parsedUrl.searchParams.get("clip_id");
+            if (clipIdParam) clipId = clipIdParam;
+          } catch {}
+
           results.push({
-            viewId: VIEW_ID,
+            clipId,
             committee,
             name,
             date,
@@ -112,8 +125,7 @@ export async function scrapeIndex(): Promise<void> {
       create: { name: committeeName },
     });
 
-
-    //TODO There isn't much consistency or convention in no things are named
+    //TODO There isn't much consistency or convention in how things are named
     // Process each meeting for this committee
     for (const rawJson of groups.get(committeeName) || []) {
       const { startedAt, endedAt } = normalizeDate(rawJson);
@@ -130,7 +142,10 @@ export async function scrapeIndex(): Promise<void> {
         update: {},
         create: {
           name,
-          rawJson,
+          rawJson: {
+            ...rawJson,
+            viewId: VIEW_ID,
+          },
           startedAt,
           endedAt,
           videoViewUrl: rawJson.videoViewUrl,
