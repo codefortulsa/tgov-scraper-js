@@ -1,6 +1,6 @@
 import fs from "fs";
 
-import { TranscriptionSegment } from "./types";
+import { TranscriptionSegment } from "./index";
 
 import logger from "encore.dev/log";
 
