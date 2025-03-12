@@ -2,7 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-import { media } from "~encore/clients";
+import env from "../env";
 import { prisma } from "./data";
 import {
   TranscriptionRequest,
@@ -12,10 +12,11 @@ import {
 } from "./types";
 import { WhisperClient } from "./whisperClient";
 
+import { media } from "~encore/clients";
+
 import { api, APIError, ErrCode } from "encore.dev/api";
 import { CronJob } from "encore.dev/cron";
 import log from "encore.dev/log";
-import env from "../env";
 
 // Initialize the Whisper client
 const whisperClient = new WhisperClient({
@@ -88,7 +89,7 @@ export const transcribe = api(
       });
       throw APIError.internal("Failed to create transcription job");
     }
-  }
+  },
 );
 
 /**
@@ -128,7 +129,7 @@ export const getJobStatus = api(
       });
       throw APIError.internal("Failed to get job status");
     }
-  }
+  },
 );
 
 /**
@@ -184,7 +185,7 @@ export const getTranscription = api(
       });
       throw APIError.internal("Failed to get transcription");
     }
-  }
+  },
 );
 
 /**
@@ -233,7 +234,7 @@ export const getMeetingTranscriptions = api(
       });
       throw APIError.internal("Failed to get meeting transcriptions");
     }
-  }
+  },
 );
 
 /**
@@ -249,10 +250,7 @@ export const processQueuedJobs = api(
       where: {
         status: "queued",
       },
-      orderBy: [
-        { priority: "desc" },
-        { createdAt: "asc" },
-      ],
+      orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
       take: 10, // Process in batches to avoid overloading
     });
 
@@ -268,7 +266,7 @@ export const processQueuedJobs = api(
     }
 
     return { processed: queuedJobs.length };
-  }
+  },
 );
 
 /**
@@ -346,7 +344,7 @@ async function processJob(jobId: string): Promise<void> {
     });
 
     // Calculate average confidence if segments available
-    const averageConfidence = 
+    const averageConfidence =
       whisperResponse.segments && whisperResponse.segments.length > 0 ?
         whisperResponse.segments.reduce(
           (sum, seg) => sum + (seg.confidence || 0),
@@ -417,14 +415,11 @@ async function processJob(jobId: string): Promise<void> {
           tempDir,
         });
       } catch (error) {
-        log.error(
-          `Failed to clean up temporary directory for job ${jobId}:`,
-          {
-            jobId,
-            tempDir,
-            error: error instanceof Error ? error.message : String(error),
-          }
-        );
+        log.error(`Failed to clean up temporary directory for job ${jobId}:`, {
+          jobId,
+          tempDir,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
   }
@@ -435,31 +430,33 @@ async function processJob(jobId: string): Promise<void> {
  */
 async function downloadFile(url: string, destination: string): Promise<void> {
   log.debug(`Downloading file from ${url} to ${destination}`);
-  
+
   try {
     const response = await fetch(url);
-    
+
     if (!response.ok) {
-      throw new Error(`Failed to download file: ${response.status} ${response.statusText}`);
+      throw new Error(
+        `Failed to download file: ${response.status} ${response.statusText}`,
+      );
     }
-    
+
     const fileStream = fs.createWriteStream(destination);
-    
+
     return new Promise((resolve, reject) => {
       if (!response.body) {
         reject(new Error("Response body is null"));
         return;
       }
-      
+
       const responseStream = response.body;
       const writableStream = fs.createWriteStream(destination);
-      
+
       responseStream.pipe(writableStream);
-      
+
       writableStream.on("finish", () => {
         resolve();
       });
-      
+
       writableStream.on("error", (err) => {
         fs.unlink(destination, () => {
           reject(err);

@@ -12,11 +12,12 @@ import path from "path";
 
 import { agendas, db } from "./data";
 
-import { api } from "encore.dev/api";
-import logger from "encore.dev/log";
+import { api, APIError } from "encore.dev/api";
+import log from "encore.dev/log";
 
 import { fileTypeFromBuffer } from "file-type";
 
+/** File types allowed for document uploads */
 const whitelistedBinaryFileTypes = ["application/pdf"];
 
 /**
@@ -40,13 +41,20 @@ export const downloadDocument = api(
     mimetype?: string;
   }> => {
     const { url, title, meetingRecordId, description } = params;
-    logger.info(`Downloading document from ${url}`);
+    log.info(`Downloading document`, { url, meetingRecordId });
 
     try {
       // Download the document
       const response = await fetch(url);
       if (!response.ok) {
-        throw new Error(`Failed to fetch document: ${response.statusText}`);
+        log.error(`Failed to fetch document`, {
+          url,
+          status: response.status,
+          statusText: response.statusText,
+        });
+        throw APIError.internal(
+          `Failed to fetch document: ${response.statusText}`,
+        );
       }
 
       const buffer = Buffer.from(await response.arrayBuffer());
@@ -58,7 +66,10 @@ export const downloadDocument = api(
 
       // ONLY ALLOW WHITELISTED FILE TYPES
       if (!whitelistedBinaryFileTypes.includes(mimetype)) {
-        throw new Error(`Document has forbidden file type: ${mimetype}`);
+        log.warn(`Document has forbidden file type`, { url, mimetype });
+        throw APIError.invalidArgument(
+          `Document has forbidden file type: ${mimetype}`,
+        );
       }
 
       // Generate a key for storage
@@ -67,7 +78,6 @@ export const downloadDocument = api(
         .update(url)
         .digest("base64url")
         .substring(0, 12);
-
       const documentKey = `${urlHash}_${Date.now()}.${fileExt}`;
 
       // Upload to cloud storage
@@ -90,7 +100,11 @@ export const downloadDocument = api(
         },
       });
 
-      logger.info(`Document saved with ID: ${documentFile.id}`);
+      log.info(`Document saved successfully`, {
+        id: documentFile.id,
+        size: attrs.size,
+        mimetype,
+      });
 
       return {
         id: documentFile.id,
@@ -98,9 +112,21 @@ export const downloadDocument = api(
         title: documentFile.title || undefined,
         mimetype: documentFile.mimetype,
       };
-    } catch (error: any) {
-      logger.error(`Error downloading document: ${error.message}`);
-      throw error;
+    } catch (error) {
+      if (error instanceof APIError) {
+        throw error;
+      }
+
+      log.error(`Error downloading document`, {
+        url,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      throw APIError.internal(
+        `Error downloading document: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
   },
 );
@@ -132,30 +158,45 @@ export const listDocuments = api(
   }> => {
     const { limit = 20, offset = 0, meetingRecordId } = params;
 
-    const where = meetingRecordId ? { meetingRecordId } : {};
+    try {
+      const where = meetingRecordId ? { meetingRecordId } : {};
 
-    const [documentFiles, total] = await Promise.all([
-      db.documentFile.findMany({
-        where,
-        take: limit,
-        skip: offset,
-        orderBy: { createdAt: "desc" },
-      }),
-      db.documentFile.count({ where }),
-    ]);
+      const [documentFiles, total] = await Promise.all([
+        db.documentFile.findMany({
+          where,
+          take: limit,
+          skip: offset,
+          orderBy: { createdAt: "desc" },
+        }),
+        db.documentFile.count({ where }),
+      ]);
 
-    return {
-      documents: documentFiles.map((doc) => ({
-        id: doc.id,
-        title: doc.title || undefined,
-        description: doc.description || undefined,
-        url: doc.url || undefined,
-        mimetype: doc.mimetype,
-        fileSize: doc.fileSize || undefined,
-        createdAt: doc.createdAt,
-      })),
-      total,
-    };
+      log.debug(`Listed documents`, {
+        count: documentFiles.length,
+        total,
+        meetingRecordId: meetingRecordId || "none",
+      });
+
+      return {
+        documents: documentFiles.map((doc) => ({
+          id: doc.id,
+          title: doc.title || undefined,
+          description: doc.description || undefined,
+          url: doc.url || undefined,
+          mimetype: doc.mimetype,
+          fileSize: doc.fileSize || undefined,
+          createdAt: doc.createdAt,
+        })),
+        total,
+      };
+    } catch (error) {
+      log.error(`Failed to list documents`, {
+        meetingRecordId: meetingRecordId || "none",
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      throw APIError.internal(`Failed to list documents`);
+    }
   },
 );
 
@@ -182,24 +223,40 @@ export const getDocument = api(
   }> => {
     const { id } = params;
 
-    const documentFile = await db.documentFile.findUnique({
-      where: { id },
-    });
+    try {
+      const documentFile = await db.documentFile.findUnique({
+        where: { id },
+      });
 
-    if (!documentFile) {
-      throw new Error(`Document with ID ${id} not found`);
+      if (!documentFile) {
+        log.info(`Document not found`, { id });
+        throw APIError.notFound(`Document with ID ${id} not found`);
+      }
+
+      log.debug(`Retrieved document`, { id });
+
+      return {
+        id: documentFile.id,
+        title: documentFile.title || undefined,
+        description: documentFile.description || undefined,
+        url: documentFile.url || undefined,
+        mimetype: documentFile.mimetype,
+        fileSize: documentFile.fileSize || undefined,
+        createdAt: documentFile.createdAt,
+        meetingRecordId: documentFile.meetingRecordId || undefined,
+      };
+    } catch (error) {
+      if (error instanceof APIError) {
+        throw error;
+      }
+
+      log.error(`Failed to get document`, {
+        id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      throw APIError.internal(`Failed to get document`);
     }
-
-    return {
-      id: documentFile.id,
-      title: documentFile.title || undefined,
-      description: documentFile.description || undefined,
-      url: documentFile.url || undefined,
-      mimetype: documentFile.mimetype,
-      fileSize: documentFile.fileSize || undefined,
-      createdAt: documentFile.createdAt,
-      meetingRecordId: documentFile.meetingRecordId || undefined,
-    };
   },
 );
 
@@ -220,16 +277,42 @@ export const updateDocument = api(
   }): Promise<{ success: boolean }> => {
     const { id, ...updates } = params;
 
-    // Filter out undefined values
-    const data = Object.fromEntries(
-      Object.entries(updates).filter(([_, v]) => v !== undefined),
-    );
+    try {
+      // Check if document exists
+      const exists = await db.documentFile.findUnique({
+        where: { id },
+        select: { id: true },
+      });
 
-    await db.documentFile.update({
-      where: { id },
-      data,
-    });
+      if (!exists) {
+        log.info(`Document not found for update`, { id });
+        throw APIError.notFound(`Document with ID ${id} not found`);
+      }
 
-    return { success: true };
+      // Filter out undefined values
+      const data = Object.fromEntries(
+        Object.entries(updates).filter(([_, v]) => v !== undefined),
+      );
+
+      await db.documentFile.update({
+        where: { id },
+        data,
+      });
+
+      log.info(`Updated document metadata`, { id, fields: Object.keys(data) });
+
+      return { success: true };
+    } catch (error) {
+      if (error instanceof APIError) {
+        throw error;
+      }
+
+      log.error(`Failed to update document`, {
+        id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      throw APIError.internal(`Failed to update document`);
+    }
   },
 );

@@ -2,9 +2,9 @@ import { launchOptions } from "./browser";
 import { db } from "./data";
 import { scrapeIndex } from "./scrape";
 
-import { api } from "encore.dev/api";
+import { api, APIError } from "encore.dev/api";
 import { CronJob } from "encore.dev/cron";
-import logger from "encore.dev/log";
+import log from "encore.dev/log";
 
 import puppeteer from "puppeteer";
 
@@ -22,17 +22,18 @@ export const scrape = api(
     tags: ["mvp", "scraper", "tgov"],
   },
   async (): Promise<{ success: boolean }> => {
-    const result = await scrapeIndex()
-      .then(() => {
-        logger.info("Scraped TGov index");
-        return { success: true };
-      })
-      .catch((e) => {
-        logger.error(e);
-        return { success: false };
-      });
+    log.info("Starting TGov index scrape");
 
-    return result;
+    try {
+      await scrapeIndex();
+      log.info("Successfully scraped TGov index");
+      return { success: true };
+    } catch (error) {
+      log.error("Failed to scrape TGov index", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw APIError.internal("Failed to scrape TGov index");
+    }
   },
 );
 
@@ -60,10 +61,11 @@ export const extractVideoUrl = api(
   },
   async (params: { viewerUrl: string }): Promise<{ videoUrl: string }> => {
     const { viewerUrl } = params;
-    logger.info(`Extracting video URL from: ${viewerUrl}`);
+    log.info("Extracting video URL", { viewerUrl });
 
-    const browser = await puppeteer.launch(launchOptions);
+    let browser;
     try {
+      browser = await puppeteer.launch(launchOptions);
       const page = await browser.newPage();
       await page.goto(viewerUrl.toString(), { waitUntil: "domcontentloaded" });
 
@@ -74,22 +76,36 @@ export const extractVideoUrl = api(
         if (typeof video_url === "string") return video_url;
 
         const videoElement = document.querySelector("video > source");
-        if (!videoElement)
+        if (!videoElement) {
           throw new Error("No element found with selector 'video > source'");
+        }
 
         video_url = videoElement.getAttribute("src");
-        if (!video_url) throw new Error("No src attribute found on element");
+        if (!video_url) {
+          throw new Error("No src attribute found on element");
+        }
 
         return video_url;
       });
 
+      log.info("Successfully extracted video URL", {
+        viewerUrl,
+        videoUrl,
+      });
+
       await browser.close();
-      logger.info(`Extracted video URL: ${videoUrl}`);
       return { videoUrl };
     } catch (error) {
-      await browser.close();
-      logger.error(`Failed to extract video URL: ${error}`);
-      throw error;
+      log.error("Failed to extract video URL", {
+        viewerUrl,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      if (browser) {
+        await browser.close();
+      }
+
+      throw APIError.internal("Failed to extract video URL from viewer page");
     }
   },
 );
@@ -125,39 +141,53 @@ export const listMeetings = api(
   }> => {
     const { limit = 20, offset = 0, committeeId } = params;
 
-    const where = committeeId ? { committeeId } : {};
+    try {
+      const where = committeeId ? { committeeId } : {};
 
-    const [meetings, total] = await Promise.all([
-      db.meetingRecord.findMany({
-        where,
-        include: {
-          committee: true,
-        },
-        take: limit,
-        skip: offset,
-        orderBy: { startedAt: "desc" },
-      }),
-      db.meetingRecord.count({ where }),
-    ]);
+      const [meetings, total] = await Promise.all([
+        db.meetingRecord.findMany({
+          where,
+          include: {
+            committee: true,
+          },
+          take: limit,
+          skip: offset,
+          orderBy: { startedAt: "desc" },
+        }),
+        db.meetingRecord.count({ where }),
+      ]);
 
-    return {
-      meetings: meetings.map((meeting) => ({
-        id: meeting.id,
-        name: meeting.name,
-        startedAt: meeting.startedAt,
-        endedAt: meeting.endedAt,
-        committee: {
-          id: meeting.committee.id,
-          name: meeting.committee.name,
-        },
-        videoViewUrl: meeting.videoViewUrl || undefined,
-        agendaViewUrl: meeting.agendaViewUrl || undefined,
-        videoId: meeting.videoId || undefined,
-        audioId: meeting.audioId || undefined,
-        agendaId: meeting.agendaId || undefined,
-      })),
-      total,
-    };
+      log.debug("Retrieved meetings", {
+        count: meetings.length,
+        total,
+        committeeId: committeeId || "all",
+      });
+
+      return {
+        meetings: meetings.map((meeting) => ({
+          id: meeting.id,
+          name: meeting.name,
+          startedAt: meeting.startedAt,
+          endedAt: meeting.endedAt,
+          committee: {
+            id: meeting.committee.id,
+            name: meeting.committee.name,
+          },
+          videoViewUrl: meeting.videoViewUrl || undefined,
+          agendaViewUrl: meeting.agendaViewUrl || undefined,
+          videoId: meeting.videoId || undefined,
+          audioId: meeting.audioId || undefined,
+          agendaId: meeting.agendaId || undefined,
+        })),
+        total,
+      };
+    } catch (error) {
+      log.error("Failed to list meetings", {
+        committeeId: committeeId || "all",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw APIError.internal("Failed to list meetings");
+    }
   },
 );
 
@@ -177,19 +207,24 @@ export const listCommittees = api(
       name: string;
     }>;
   }> => {
-    const committees = await db.committee.findMany({
-      orderBy: { name: "asc" },
-    });
+    try {
+      const committees = await db.committee.findMany({
+        orderBy: { name: "asc" },
+      });
 
-    return {
-      committees: committees.map((committee) => ({
-        id: committee.id,
-        name: committee.name,
-      })),
-    };
+      log.debug("Retrieved committees", { count: committees.length });
+
+      return {
+        committees: committees.map((committee) => ({
+          id: committee.id,
+          name: committee.name,
+        })),
+      };
+    } catch (error) {
+      log.error("Failed to list committees", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw APIError.internal("Failed to list committees");
+    }
   },
 );
-
-/**
- * TODO: Endpoint to get all media files for a meeting?
- */

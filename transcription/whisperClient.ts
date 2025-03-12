@@ -1,7 +1,10 @@
-import OpenAI from 'openai';
-import fs from 'fs';
+import fs from "fs";
+
+import { TranscriptionSegment } from "./types";
+
 import logger from "encore.dev/log";
-import { TranscriptionSegment } from './types';
+
+import OpenAI from "openai";
 
 export interface WhisperClientOptions {
   apiKey: string;
@@ -11,7 +14,7 @@ export interface WhisperClientOptions {
 export interface WhisperTranscriptionOptions {
   model?: string;
   language?: string;
-  responseFormat?: 'json' | 'text' | 'srt' | 'verbose_json' | 'vtt';
+  responseFormat?: "json" | "text" | "srt" | "verbose_json" | "vtt";
   prompt?: string;
   temperature?: number;
 }
@@ -32,7 +35,7 @@ export class WhisperClient {
 
   /**
    * Create a new WhisperClient instance
-   * 
+   *
    * @param options Configuration options for the client
    */
   constructor(options: WhisperClientOptions) {
@@ -43,23 +46,23 @@ export class WhisperClient {
     this.client = new OpenAI({
       apiKey: options.apiKey,
     });
-    this.defaultModel = options.defaultModel || 'whisper-1';
-    
-    logger.info("WhisperClient initialized", { 
-      model: this.defaultModel 
+    this.defaultModel = options.defaultModel || "whisper-1";
+
+    logger.info("WhisperClient initialized", {
+      model: this.defaultModel,
     });
   }
 
   /**
    * Transcribe an audio file using the OpenAI Whisper API
-   * 
+   *
    * @param audioFilePath Path to the audio file
    * @param options Transcription options
    * @returns Transcription result
    */
   async transcribeFile(
     audioFilePath: string,
-    options: WhisperTranscriptionOptions = {}
+    options: WhisperTranscriptionOptions = {},
   ): Promise<WhisperResponse> {
     const startTime = Date.now();
 
@@ -68,58 +71,64 @@ export class WhisperClient {
     }
 
     const fileSize = fs.statSync(audioFilePath).size;
-    logger.info("Starting transcription", { 
-      audioFilePath, 
+    logger.info("Starting transcription", {
+      audioFilePath,
       fileSize,
       model: options.model || this.defaultModel,
-      language: options.language
+      language: options.language,
     });
 
     const fileStream = fs.createReadStream(audioFilePath);
-    
+
     try {
       const response = await this.client.audio.transcriptions.create({
         file: fileStream,
         model: options.model || this.defaultModel,
         language: options.language,
-        response_format: options.responseFormat || 'verbose_json',
+        response_format: options.responseFormat || "verbose_json",
         prompt: options.prompt,
         temperature: options.temperature,
       });
 
       const processingTime = (Date.now() - startTime) / 1000;
-      logger.info("Transcription completed", { 
+      logger.info("Transcription completed", {
         processingTime,
-        model: options.model || this.defaultModel
+        model: options.model || this.defaultModel,
       });
-      
-      if (options.responseFormat === 'verbose_json' || options.responseFormat === undefined) {
+
+      if (
+        options.responseFormat === "verbose_json" ||
+        options.responseFormat === undefined
+      ) {
         // Cast to any since the OpenAI types don't include the verbose_json format
         const verboseResponse = response as any;
-        
+
         return {
           text: verboseResponse.text,
           language: verboseResponse.language,
           duration: verboseResponse.duration,
-          segments: verboseResponse.segments.map((segment: any, index: number) => ({
-            index,
-            start: segment.start,
-            end: segment.end,
-            text: segment.text,
-            confidence: segment.confidence,
-          })),
+          segments: verboseResponse.segments.map(
+            (segment: any, index: number) => ({
+              index,
+              start: segment.start,
+              end: segment.end,
+              text: segment.text,
+              confidence: segment.confidence,
+            }),
+          ),
         };
       }
-      
+
       return {
         text: response.text,
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error("Error transcribing file", { 
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      logger.error("Error transcribing file", {
         audioFilePath,
         error: errorMessage,
-        model: options.model || this.defaultModel
+        model: options.model || this.defaultModel,
       });
       throw error;
     } finally {
