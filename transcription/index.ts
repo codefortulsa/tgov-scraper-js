@@ -9,7 +9,7 @@ import { WhisperClient } from "./whisperClient";
 
 import { media } from "~encore/clients";
 
-import { api, APIError, ErrCode } from "encore.dev/api";
+import { api, APIError } from "encore.dev/api";
 import { CronJob } from "encore.dev/cron";
 import log from "encore.dev/log";
 
@@ -406,6 +406,7 @@ export const getMeetingTranscriptions = api(
 
 /**
  * Scheduled job to process any queued transcription jobs
+ * // TODO: TEST THIS
  */
 export const processQueuedJobs = api(
   {

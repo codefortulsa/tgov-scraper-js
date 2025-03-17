@@ -4,9 +4,7 @@
  * This module provides functionality to download and link agenda documents
  * to specific meeting records from the TGov service.
  */
-import { downloadDocument } from "./index";
-
-import { tgov } from "~encore/clients";
+import { documents, tgov } from "~encore/clients";
 
 import { api } from "encore.dev/api";
 import logger from "encore.dev/log";
@@ -54,7 +52,7 @@ export const downloadMeetingDocuments = api(
         }
 
         // Download the agenda document
-        const document = await downloadDocument({
+        const document = await documents.downloadDocument({
           url: meeting.agendaViewUrl,
           meetingRecordId: meetingId,
           title: `${meeting.committee.name} - ${meeting.name} Agenda`,

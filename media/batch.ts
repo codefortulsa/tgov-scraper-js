@@ -29,6 +29,7 @@ interface BatchProcessResponse {
 
 /**
  * Queue a batch of videos for processing
+ * // TODO: TEST THIS
  *
  * This endpoint accepts an array of viewer URLs and queues them for processing.
  * It returns a batch ID that can be used to check the status of the batch.
@@ -89,6 +90,7 @@ export const queueVideoBatch = api(
 
 /**
  * Get the status of a batch
+ * // TODO: TEST THIS
  */
 export const getBatchStatus = api(
   {
@@ -135,6 +137,7 @@ export const getBatchStatus = api(
 
 /**
  * List all batches
+ * // TODO: TEST THIS
  */
 export const listBatches = api(
   {
@@ -311,6 +314,7 @@ export const processNextBatch = api(
 
 /**
  * Automatic batch processing endpoint for cron job
+ * // TODO: TEST THIS
  */
 export const autoProcessNextBatch = api(
   {

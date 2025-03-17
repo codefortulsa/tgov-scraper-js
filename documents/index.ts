@@ -7,7 +7,6 @@
  * - Link documents to meeting records
  */
 import crypto from "crypto";
-import fs from "fs/promises";
 import path from "path";
 
 import { agendas, db } from "./data";
@@ -290,8 +289,8 @@ export const updateDocument = api(
       }
 
       // Filter out undefined values
-      const data = Object.fromEntries(
-        Object.entries(updates).filter(([_, v]) => v !== undefined),
+      const data: typeof updates = Object.fromEntries(
+        Object.entries(updates).filter(([_, v]) => typeof v !== "undefined"),
       );
 
       await db.documentFile.update({
