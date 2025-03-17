@@ -253,7 +253,7 @@ export const getMeeting = api(
       videoId?: string;
       audioId?: string;
       agendaId?: string;
-      rawJson: string;
+      rawJson: PrismaJson.TGovIndexMeetingRawJSON;
       createdAt: Date;
       updatedAt: Date;
     };
@@ -294,7 +294,7 @@ export const getMeeting = api(
           videoId: meeting.videoId || undefined,
           audioId: meeting.audioId || undefined,
           agendaId: meeting.agendaId || undefined,
-          rawJson: JSON.stringify(meeting.rawJson),
+          rawJson: meeting.rawJson,
           createdAt: meeting.createdAt,
           updatedAt: meeting.updatedAt,
         },
