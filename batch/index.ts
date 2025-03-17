@@ -10,6 +10,13 @@
 import { db } from "./data";
 import { taskCompleted } from "./topics";
 
+import {
+  BatchStatus,
+  BatchType,
+  TaskStatus,
+  TaskType,
+} from "@prisma/client/batch/index.js";
+
 import { api, APIError } from "encore.dev/api";
 import log from "encore.dev/log";
 
@@ -37,12 +44,12 @@ export const createTask = api(
     /**
      * Type of task to create
      */
-    taskType: string;
+    taskType: TaskType;
 
     /**
      * Task input data (specific to task type)
      */
-    input: Record<string, any>;
+    input: PrismaJson.TaskInputJSON;
 
     /**
      * Optional task priority (higher numbers = higher priority)
@@ -87,7 +94,7 @@ export const createTask = api(
         data: {
           batchId,
           taskType,
-          status: "queued",
+          status: TaskStatus.QUEUED,
           priority,
           input,
           meetingRecordId,
@@ -153,7 +160,7 @@ export const createBatch = api(
     /**
      * Type of batch (media, document, transcription, etc.)
      */
-    batchType: string;
+    batchType: BatchType;
 
     /**
      * Optional name for the batch
@@ -168,18 +175,18 @@ export const createBatch = api(
     /**
      * Optional metadata for the batch
      */
-    metadata?: Record<string, any>;
+    metadata?: PrismaJson.BatchMetadataJSON;
   }): Promise<{
     batchId: string;
   }> => {
-    const { batchType, name, priority = 0, metadata = {} } = params;
+    const { batchType, name, priority = 0, metadata } = params;
 
     try {
       const batch = await db.processingBatch.create({
         data: {
           batchType,
           name,
-          status: "queued",
+          status: BatchStatus.QUEUED,
           priority,
           metadata,
           totalTasks: 0,
@@ -220,16 +227,16 @@ export const getBatchStatus = api(
   async (params: {
     batchId: string;
     includeTasks?: boolean;
-    taskStatus?: string | string[];
+    taskStatus?: TaskStatus | TaskStatus[];
     taskLimit?: number;
   }): Promise<{
     batch: {
       id: string;
       name?: string;
-      batchType: string;
+      batchType: BatchType;
       status: string;
       priority: number;
-      metadata: Record<string, any>;
+      metadata?: PrismaJson.BatchMetadataJSON;
       createdAt: Date;
       updatedAt: Date;
       totalTasks: number;
@@ -240,11 +247,11 @@ export const getBatchStatus = api(
     };
     tasks?: Array<{
       id: string;
-      taskType: string;
+      taskType: TaskType;
       status: string;
       priority: number;
-      input: Record<string, any>;
-      output?: Record<string, any>;
+      input: PrismaJson.TaskInputJSON;
+      output?: PrismaJson.TaskOutputJSON;
       error?: string;
       createdAt: Date;
       updatedAt: Date;
@@ -273,13 +280,13 @@ export const getBatchStatus = api(
       // If tasks are requested, fetch them
       let tasks;
       if (includeTasks) {
-        const where: any = { batchId };
-
-        // Filter by task status if provided
-        if (taskStatus) {
-          where.status =
-            Array.isArray(taskStatus) ? { in: taskStatus } : taskStatus;
-        }
+        const where = {
+          batchId,
+          // Filter by task status if provided
+          ...(taskStatus && {
+            status: Array.isArray(taskStatus) ? { in: taskStatus } : taskStatus,
+          }),
+        };
 
         tasks = await db.processingTask.findMany({
           where,
@@ -295,7 +302,7 @@ export const getBatchStatus = api(
           batchType: batch.batchType,
           status: batch.status,
           priority: batch.priority,
-          metadata: batch.metadata,
+          metadata: batch.metadata ?? undefined,
           createdAt: batch.createdAt,
           updatedAt: batch.updatedAt,
           totalTasks: batch.totalTasks,
@@ -339,8 +346,8 @@ export const getBatchStatus = api(
  */
 export async function updateTaskStatus(params: {
   taskId: string;
-  status: string;
-  output?: Record<string, any>;
+  status: TaskStatus;
+  output?: PrismaJson.TaskOutputJSON;
   error?: string;
 }): Promise<void> {
   const { taskId, status, output, error } = params;
@@ -375,7 +382,7 @@ export async function updateTaskStatus(params: {
           output: output !== undefined ? output : undefined,
           error: error !== undefined ? error : undefined,
           completedAt:
-            status === "completed" || status === "failed" ?
+            status === TaskStatus.COMPLETED || TaskStatus.FAILED ?
               new Date()
             : undefined,
         },
@@ -386,20 +393,20 @@ export async function updateTaskStatus(params: {
         const updateData: any = {};
 
         // Decrement counter for old status
-        if (oldStatus === "queued") {
+        if (oldStatus === TaskStatus.QUEUED) {
           updateData.queuedTasks = { decrement: 1 };
-        } else if (oldStatus === "processing") {
+        } else if (oldStatus === TaskStatus.PROCESSING) {
           updateData.processingTasks = { decrement: 1 };
         }
 
         // Increment counter for new status
-        if (status === "queued") {
+        if (status === TaskStatus.QUEUED) {
           updateData.queuedTasks = { increment: 1 };
-        } else if (status === "processing") {
+        } else if (status === TaskStatus.PROCESSING) {
           updateData.processingTasks = { increment: 1 };
-        } else if (status === "completed") {
+        } else if (status === TaskStatus.COMPLETED) {
           updateData.completedTasks = { increment: 1 };
-        } else if (status === "failed") {
+        } else if (TaskStatus.FAILED) {
           updateData.failedTasks = { increment: 1 };
         }
 
@@ -429,14 +436,14 @@ export async function updateTaskStatus(params: {
             batch.completedTasks + batch.failedTasks === batch.totalTasks
           ) {
             // All tasks are either completed or failed
-            let batchStatus: string;
+            let batchStatus: BatchStatus;
 
             if (batch.failedTasks === 0) {
-              batchStatus = "completed"; // All tasks completed successfully
+              batchStatus = BatchStatus.COMPLETED; // All tasks completed successfully
             } else if (batch.completedTasks === 0) {
-              batchStatus = "failed"; // All tasks failed
+              batchStatus = BatchStatus.FAILED; // All tasks failed
             } else {
-              batchStatus = "completed_with_errors"; // Mixed results
+              batchStatus = BatchStatus.COMPLETED_WITH_ERRORS; // Mixed results
             }
 
             // Only update if status has changed
@@ -451,15 +458,15 @@ export async function updateTaskStatus(params: {
       }
 
       // For completed or failed tasks, publish an event
-      if (status === "completed" || status === "failed") {
+      if (status === TaskStatus.COMPLETED || TaskStatus.FAILED) {
         await taskCompleted.publish({
           taskId,
           taskType: task.taskType,
           batchId: task.batchId,
           status,
-          success: status === "completed",
-          output: output || {},
-          error: error,
+          success: status === TaskStatus.COMPLETED,
+          output: output,
+          errorMessage: error,
           resourceIds: getResourceIds(output),
           timestamp: new Date(),
           sourceService: "batch",
@@ -489,7 +496,9 @@ export async function updateTaskStatus(params: {
 /**
  * Extract important resource IDs from task output for event notifications
  */
-function getResourceIds(output?: Record<string, any>): Record<string, string> {
+function getResourceIds(
+  output?: PrismaJson.TaskOutputJSON,
+): Record<string, string> {
   if (!output) return {};
 
   const resourceMap: Record<string, string> = {};
@@ -504,11 +513,12 @@ function getResourceIds(output?: Record<string, any>): Record<string, string> {
     "meetingId",
     "meetingRecordId",
     "diarizationId",
-  ];
+  ] as const;
 
   for (const field of resourceFields) {
-    if (output[field] && typeof output[field] === "string") {
-      resourceMap[field] = output[field];
+    const key = field as keyof typeof output;
+    if (field in output && typeof output[key] === "string") {
+      resourceMap[key] = output[key];
     }
   }
 

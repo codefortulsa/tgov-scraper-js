@@ -9,43 +9,60 @@ import { batchStatusChanged } from "../topics";
 import { processNextDocumentTasks } from "./documents";
 import { processNextMediaTasks } from "./media";
 
+import {
+  BatchStatus,
+  BatchType,
+  TaskStatus,
+} from "@prisma/client/batch/index.js";
+
 import { api, APIError } from "encore.dev/api";
 import { CronJob } from "encore.dev/cron";
 import log from "encore.dev/log";
 
 /**
- * Types of batch processors supported by the system
- */
-export type ProcessorType = "media" | "document" | "transcription";
-
-/**
  * Interface representing a task processor
  */
 interface TaskProcessor {
-  type: ProcessorType;
+  type: BatchType;
   processFunction: (limit: number) => Promise<{ processed: number }>;
   maxConcurrentTasks?: number;
   defaultPriority?: number;
 }
 
+type BatchSummary = {
+  id: string;
+  name?: string;
+  batchType: BatchType;
+  status: BatchStatus;
+  taskSummary: {
+    total: number;
+    completed: number;
+    failed: number;
+    queued: number;
+    processing: number;
+  };
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 /**
  * Registry of available task processors
  */
-const processors: Record<ProcessorType, TaskProcessor> = {
-  media: {
-    type: "media",
+const processors: Record<BatchType, TaskProcessor> = {
+  [BatchType.MEDIA]: {
+    type: BatchType.MEDIA,
     processFunction: (limit) => processNextMediaTasks({ limit }),
     maxConcurrentTasks: 5,
     defaultPriority: 10,
   },
-  document: {
-    type: "document",
+  [BatchType.DOCUMENT]: {
+    type: BatchType.DOCUMENT,
     processFunction: (limit) => processNextDocumentTasks({ limit }),
     maxConcurrentTasks: 10,
     defaultPriority: 5,
   },
-  transcription: {
-    type: "transcription",
+  [BatchType.TRANSCRIPTION]: {
+    type: BatchType.TRANSCRIPTION,
     // Placeholder - will be implemented later
     processFunction: async () => ({ processed: 0 }),
     maxConcurrentTasks: 3,
@@ -66,7 +83,7 @@ export const processAllTaskTypes = api(
     /**
      * Processor types to run (defaults to all)
      */
-    types?: ProcessorType[];
+    types?: BatchType[];
 
     /**
      * Maximum tasks per processor
@@ -76,7 +93,7 @@ export const processAllTaskTypes = api(
     results: Record<string, { processed: number }>;
   }> => {
     const {
-      types = Object.keys(processors) as ProcessorType[],
+      types = Object.keys(processors) as BatchType[],
       tasksPerProcessor = 5,
     } = params;
 
@@ -108,7 +125,7 @@ export const processAllTaskTypes = api(
       } catch (error) {
         log.error(`Error processing tasks of type ${type}`, {
           error: error instanceof Error ? error.message : String(error),
-          processorType: type,
+          BatchType: type,
         });
 
         results[type] = { processed: 0 };
@@ -131,11 +148,7 @@ export const processAllTaskTypesCronTarget = api(
   },
   async () => {
     // Call with default parameters
-    return processAllTaskTypes({
-      mediaLimit: 5,
-      documentLimit: 5,
-      transcriptionLimit: 5,
-    });
+    return processAllTaskTypes({ tasksPerProcessor: 5 });
   },
 );
 
@@ -157,47 +170,24 @@ export const getAllBatchStatus = api(
     /**
      * Filter by status
      */
-    status?: string;
+    status?: BatchStatus;
   }): Promise<{
-    activeBatches: Record<
-      string,
-      Array<{
-        id: string;
-        name?: string;
-        batchType: string;
-        status: string;
-        taskSummary: {
-          total: number;
-          completed: number;
-          failed: number;
-          queued: number;
-          processing: number;
-        };
-        createdAt: Date;
-        updatedAt: Date;
-      }>
-    >;
+    activeBatches: Record<string, Array<BatchSummary>>;
   }> => {
     const { limit = 10, status } = params;
-
-    // Build filter condition
-    const where: any = {};
-    if (status) {
-      where.status = status;
-    } else {
-      // Default to showing incomplete batches
-      where.status = { notIn: ["completed", "failed"] };
-    }
-
     // Get all active batches
     const batches = await db.processingBatch.findMany({
-      where,
+      where: {
+        status: status || {
+          notIn: [BatchStatus.COMPLETED, BatchStatus.FAILED],
+        },
+      },
       orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
       take: limit * 3, // Fetch more and will group by type with limit per type
     });
 
     // Group batches by type
-    const batchesByType: Record<string, any[]> = {};
+    const batchesByType: Record<string, Array<BatchSummary>> = {};
 
     for (const batch of batches) {
       if (!batchesByType[batch.batchType]) {
@@ -238,10 +228,10 @@ export const updateBatchStatus = api(
   },
   async (params: {
     batchId: string;
-    status: string;
+    status: BatchStatus;
   }): Promise<{
     success: boolean;
-    previousStatus?: string;
+    previousStatus?: BatchStatus;
   }> => {
     const { batchId, status } = params;
 
@@ -272,7 +262,7 @@ export const updateBatchStatus = api(
       // Publish status changed event
       await batchStatusChanged.publish({
         batchId,
-        status: status as any,
+        status: status,
         taskSummary: {
           total: updatedBatch.totalTasks,
           completed: updatedBatch.completedTasks,
@@ -339,8 +329,8 @@ export const retryFailedTasks = api(
       const failedTasks = await db.processingTask.findMany({
         where: {
           batchId,
-          status: "failed",
-          retryCount: { lt: db.processingTask.maxRetries },
+          status: TaskStatus.FAILED,
+          retryCount: { lt: db.processingTask.fields.maxRetries },
         },
         take: limit,
       });
@@ -355,7 +345,7 @@ export const retryFailedTasks = api(
         await db.processingTask.update({
           where: { id: task.id },
           data: {
-            status: "queued",
+            status: TaskStatus.QUEUED,
             retryCount: { increment: 1 },
             error: null,
           },
@@ -371,10 +361,10 @@ export const retryFailedTasks = api(
           failedTasks: { decrement: retriedCount },
           status:
             (
-              batch.status === "failed" ||
-              batch.status === "completed_with_errors"
+              batch.status === BatchStatus.FAILED ||
+              batch.status === BatchStatus.COMPLETED_WITH_ERRORS
             ) ?
-              "processing"
+              BatchStatus.PROCESSING
             : batch.status,
         },
       });
@@ -425,7 +415,10 @@ export const cancelBatch = api(
       }
 
       // Only allow canceling batches that are not completed or failed
-      if (batch.status === "completed" || batch.status === "failed") {
+      if (
+        batch.status === BatchStatus.COMPLETED ||
+        batch.status === BatchStatus.FAILED
+      ) {
         throw APIError.invalidArgument(
           `Cannot cancel batch with status ${batch.status}`,
         );
@@ -435,7 +428,7 @@ export const cancelBatch = api(
       const pendingTasks = await db.processingTask.findMany({
         where: {
           batchId,
-          status: { in: ["queued", "processing"] },
+          status: { in: [TaskStatus.QUEUED, TaskStatus.PROCESSING] },
         },
       });
 
@@ -444,7 +437,7 @@ export const cancelBatch = api(
         await db.processingTask.update({
           where: { id: task.id },
           data: {
-            status: "failed",
+            status: TaskStatus.FAILED,
             error: "Canceled by user",
             completedAt: new Date(),
           },
@@ -455,7 +448,7 @@ export const cancelBatch = api(
       await db.processingBatch.update({
         where: { id: batchId },
         data: {
-          status: "failed",
+          status: BatchStatus.FAILED,
           queuedTasks: 0,
           processingTasks: 0,
           failedTasks: batch.failedTasks + pendingTasks.length,
@@ -465,7 +458,7 @@ export const cancelBatch = api(
       // Publish status changed event
       await batchStatusChanged.publish({
         batchId,
-        status: "failed",
+        status: BatchStatus.FAILED,
         taskSummary: {
           total: batch.totalTasks,
           completed: batch.completedTasks,

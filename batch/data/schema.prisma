@@ -8,6 +8,12 @@ generator client {
     output          = "../../node_modules/@prisma/client/batch"
 }
 
+generator json {
+    provider   = "prisma-json-types-generator"
+    engineType = "library"
+    output     = "../../node_modules/@prisma/client/batch/jsontypes.ts"
+}
+
 datasource db {
     provider = "postgresql"
     url      = env("BATCH_DATABASE_URL")
@@ -36,9 +42,16 @@ enum BatchType {
 }
 
 enum TaskType {
-    TRANSCRIBE
-    EXTRACT_TEXT
-    EXTRACT_METADATA
+    DOCUMENT_DOWNLOAD
+    DOCUMENT_CONVERT
+    DOCUMENT_EXTRACT
+    MEDIA_VIDEO_DOWNLOAD
+    MEDIA_VIDEO_PROCESS
+    MEDIA_AUDIO_EXTRACT
+    MEDIA_AUDIO_TRANSCRIBE
+    TRANSCRIPTION_FORMAT
+    TRANSCRIPTION_DIARIZE
+    DOCUMENT_PARSE
 }
 
 enum EventType {

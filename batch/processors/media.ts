@@ -10,6 +10,7 @@ import { db } from "../data";
 import { updateTaskStatus } from "../index";
 import { batchCreated, taskCompleted } from "../topics";
 
+import { TaskStatus } from "@prisma/client/batch/index.js";
 import { media, tgov } from "~encore/clients";
 
 import { api } from "encore.dev/api";
@@ -40,7 +41,7 @@ export const processNextMediaTasks = api(
     // Get next available tasks for media processing
     const nextTasks = await db.processingTask.findMany({
       where: {
-        status: "queued",
+        status: TaskStatus.QUEUED,
         taskType: { in: MEDIA_TASK_TYPES },
       },
       orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
@@ -79,7 +80,7 @@ export const processNextMediaTasks = api(
         // Mark task as processing
         await updateTaskStatus({
           taskId: task.id,
-          status: "processing",
+          status: TaskStatus.PROCESSING,
         });
 
         // Process based on task type
@@ -111,7 +112,7 @@ export const processNextMediaTasks = api(
         // Mark task as failed
         await updateTaskStatus({
           taskId: task.id,
-          status: "failed",
+          status: TaskStatus.FAILED,
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -159,7 +160,7 @@ async function processVideoDownload(task: any): Promise<void> {
   // Update task with success
   await updateTaskStatus({
     taskId: task.id,
-    status: "completed",
+    status: TaskStatus.COMPLETED,
     output: {
       videoId: downloadResult.videoId,
       videoUrl: downloadResult.videoUrl,
@@ -191,7 +192,7 @@ async function processAudioExtract(task: any): Promise<void> {
   // Update task with success
   await updateTaskStatus({
     taskId: task.id,
-    status: "completed",
+    status: TaskStatus.COMPLETED,
     output: {
       audioId: extractResult.audioId,
       audioUrl: extractResult.audioUrl,
@@ -245,7 +246,7 @@ async function processVideoComplete(task: any): Promise<void> {
   // Update task with success
   await updateTaskStatus({
     taskId: task.id,
-    status: "completed",
+    status: TaskStatus.COMPLETED,
     output: {
       videoId: processResult.videoId,
       videoUrl: processResult.videoUrl,

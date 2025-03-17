@@ -10,6 +10,12 @@ import { db } from "../data";
 import { updateTaskStatus } from "../index";
 import { batchCreated, taskCompleted } from "../topics";
 
+import {
+  BatchStatus,
+  BatchType,
+  TaskStatus,
+  TaskType,
+} from "@prisma/client/batch/index.js";
 import { documents, tgov } from "~encore/clients";
 
 import { api } from "encore.dev/api";
@@ -20,9 +26,9 @@ import { Subscription } from "encore.dev/pubsub";
  * List of document task types this processor handles
  */
 const DOCUMENT_TASK_TYPES = [
-  "document_download",
-  "agenda_download",
-  "document_parse",
+  TaskType.DOCUMENT_DOWNLOAD,
+  TaskType.AGENDA_DOWNLOAD,
+  TaskType.DOCUMENT_PARSE,
 ];
 
 /**
@@ -44,7 +50,7 @@ export const processNextDocumentTasks = api(
     // Get next available tasks for document processing
     const nextTasks = await db.processingTask.findMany({
       where: {
-        status: "queued",
+        status: TaskStatus.QUEUED,
         taskType: { in: DOCUMENT_TASK_TYPES },
       },
       orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
@@ -65,7 +71,7 @@ export const processNextDocumentTasks = api(
 
       // All dependencies must be completed
       return task.dependsOn.every(
-        (dep) => dep.dependencyTask.status === "completed",
+        (dep) => dep.dependencyTask.status === TaskStatus.COMPLETED,
       );
     });
 
@@ -83,7 +89,7 @@ export const processNextDocumentTasks = api(
         // Mark task as processing
         await updateTaskStatus({
           taskId: task.id,
-          status: "processing",
+          status: TaskStatus.PROCESSING,
         });
 
         // Process based on task type
@@ -115,7 +121,7 @@ export const processNextDocumentTasks = api(
         // Mark task as failed
         await updateTaskStatus({
           taskId: task.id,
-          status: "failed",
+          status: TaskStatus.FAILED,
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -165,7 +171,7 @@ async function processAgendaDownload(task: any): Promise<void> {
   // Update task with success
   await updateTaskStatus({
     taskId: task.id,
-    status: "completed",
+    status: TaskStatus.COMPLETED,
     output: {
       documentId: document.id,
       documentUrl: document.url,
@@ -204,7 +210,7 @@ async function processDocumentDownload(task: any): Promise<void> {
   // Update task with success
   await updateTaskStatus({
     taskId: task.id,
-    status: "completed",
+    status: TaskStatus.COMPLETED,
     output: {
       documentId: document.id,
       documentUrl: document.url,
@@ -235,7 +241,7 @@ async function processDocumentParse(task: any): Promise<void> {
   // Update task with success
   await updateTaskStatus({
     taskId: task.id,
-    status: "completed",
+    status: TaskStatus.COMPLETED,
     output: {
       documentId: input.documentId,
       parsedContent: {
@@ -258,7 +264,7 @@ async function processDocumentParse(task: any): Promise<void> {
 const _ = new Subscription(batchCreated, "document-batch-processor", {
   handler: async (event) => {
     // Only process batches of type "document"
-    if (event.batchType !== "document") return;
+    if (event.batchType !== BatchType.DOCUMENT) return;
 
     log.info(`Detected new document batch ${event.batchId}`, {
       batchId: event.batchId,
@@ -302,8 +308,8 @@ export const queueAgendaBatch = api(
     // Create a batch with agenda download tasks
     const batch = await db.processingBatch.create({
       data: {
-        batchType: "document",
-        status: "queued",
+        batchType: BatchType.DOCUMENT,
+        status: BatchStatus.QUEUED,
         priority,
         totalTasks: meetingIds.length,
         queuedTasks: meetingIds.length,
@@ -320,9 +326,9 @@ export const queueAgendaBatch = api(
         data: {
           batchId: batch.id,
           taskType: "agenda_download",
-          status: "queued",
+          status: TaskStatus.QUEUED,
           priority,
-          input: { meetingId },
+          input: { meetingRecordId: meetingId, taskType: "agenda_download" },
           meetingRecordId: meetingId,
         },
       });
@@ -331,7 +337,7 @@ export const queueAgendaBatch = api(
     // Publish batch created event
     await batchCreated.publish({
       batchId: batch.id,
-      batchType: "document",
+      batchType: BatchType.DOCUMENT,
       taskCount: meetingIds.length,
       metadata: {
         type: "agenda_download",

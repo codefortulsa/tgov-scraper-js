@@ -4,6 +4,13 @@
  * This file defines the pub/sub topics used for event-driven communication
  * between services in the batch processing pipeline.
  */
+import {
+  BatchStatus,
+  BatchType,
+  TaskStatus,
+  TaskType,
+} from "@prisma/client/batch/index.js";
+
 import { Attribute, Topic } from "encore.dev/pubsub";
 
 /**
@@ -31,9 +38,9 @@ export interface BatchCreatedEvent extends BatchEventBase {
   batchId: Attribute<string>;
 
   /**
-   * The type of batch (media, documents, transcription)
+   * The type of batch
    */
-  batchType: string;
+  batchType: BatchType;
 
   /**
    * The number of tasks in the batch
@@ -43,7 +50,7 @@ export interface BatchCreatedEvent extends BatchEventBase {
   /**
    * Optional metadata about the batch
    */
-  metadata?: Record<string, any>;
+  metadata?: PrismaJson.BatchMetadataJSON;
 }
 
 /**
@@ -63,12 +70,22 @@ export interface TaskCompletedEvent extends BatchEventBase {
   /**
    * The type of task that completed
    */
-  taskType: string;
+  taskType: TaskType;
 
   /**
    * Whether the task was successful
    */
   success: boolean;
+
+  /**
+   * The output of the task
+   */
+  output?: PrismaJson.TaskOutputJSON;
+
+  /**
+   * The detailed status of the task
+   */
+  status: TaskStatus;
 
   /**
    * Error message if the task failed
@@ -98,12 +115,7 @@ export interface BatchStatusChangedEvent extends BatchEventBase {
   /**
    * The new status of the batch
    */
-  status:
-    | "queued"
-    | "processing"
-    | "completed"
-    | "failed"
-    | "completed_with_errors";
+  status: BatchStatus;
 
   /**
    * Summary of task statuses

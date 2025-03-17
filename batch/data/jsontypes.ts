@@ -1,10 +1,15 @@
+import { BatchType } from "@prisma/client/batch/index.js";
+
 declare global {
   namespace PrismaJson {
     // Base metadata types for different batch types
-    type BatchMetadataJSON = MediaBatchMetadataJSON | DocumentBatchMetadataJSON | TranscriptionBatchMetadataJSON;
+    type BatchMetadataJSON =
+      | MediaBatchMetadataJSON
+      | DocumentBatchMetadataJSON
+      | TranscriptionBatchMetadataJSON;
 
     type MediaBatchMetadataJSON = {
-      type: "media";
+      type: (typeof BatchType)["MEDIA"];
       videoCount?: number;
       audioCount?: number;
       options?: {
@@ -13,14 +18,14 @@ declare global {
     };
 
     type DocumentBatchMetadataJSON = {
-      type: "document";
+      type: (typeof BatchType)["DOCUMENT"];
       documentCount?: number;
       documentTypes?: string[];
       source?: string;
     };
 
     type TranscriptionBatchMetadataJSON = {
-      type: "transcription";
+      type: (typeof BatchType)["TRANSCRIPTION"];
       audioCount?: number;
       options?: {
         language?: string;
@@ -29,9 +34,9 @@ declare global {
     };
 
     // Task input types for different task types
-    type TaskInputJSON = 
-      | MediaTaskInputJSON 
-      | DocumentTaskInputJSON 
+    type TaskInputJSON =
+      | MediaTaskInputJSON
+      | DocumentTaskInputJSON
       | TranscriptionTaskInputJSON;
 
     type MediaTaskInputJSON = {
@@ -64,12 +69,13 @@ declare global {
     };
 
     // Task output types for different task types
-    type TaskOutputJSON = 
-      | MediaTaskOutputJSON 
-      | DocumentTaskOutputJSON 
+    type TaskOutputJSON =
+      | MediaTaskOutputJSON
+      | DocumentTaskOutputJSON
       | TranscriptionTaskOutputJSON;
 
     type MediaTaskOutputJSON = {
+      id?: string;
       videoId?: string;
       audioId?: string;
       url?: string;
@@ -79,6 +85,7 @@ declare global {
     };
 
     type DocumentTaskOutputJSON = {
+      id?: string;
       documentId?: string;
       url?: string;
       mimeType?: string;
@@ -88,6 +95,7 @@ declare global {
     };
 
     type TranscriptionTaskOutputJSON = {
+      id?: string;
       transcriptionId?: string;
       audioFileId?: string;
       language?: string;
@@ -98,9 +106,9 @@ declare global {
     };
 
     // Webhook payload structure
-    type WebhookPayloadJSON = 
-      | BatchCreatedWebhookPayload 
-      | TaskCompletedWebhookPayload 
+    type WebhookPayloadJSON =
+      | BatchCreatedWebhookPayload
+      | TaskCompletedWebhookPayload
       | BatchStatusChangedWebhookPayload;
 
     type BatchCreatedWebhookPayload = {

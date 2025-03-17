@@ -10,6 +10,11 @@ import { db } from "../data";
 import { updateTaskStatus } from "../index";
 import { batchCreated, taskCompleted } from "../topics";
 
+import {
+  BatchStatus,
+  BatchType,
+  TaskStatus,
+} from "@prisma/client/batch/index.js";
 import { media, transcription } from "~encore/clients";
 
 import { api } from "encore.dev/api";
@@ -44,7 +49,7 @@ export const processNextTranscriptionTasks = api(
     // Get next available tasks for transcription processing
     const nextTasks = await db.processingTask.findMany({
       where: {
-        status: "queued",
+        status: TaskStatus.QUEUED,
         taskType: { in: TRANSCRIPTION_TASK_TYPES },
       },
       orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
@@ -83,7 +88,7 @@ export const processNextTranscriptionTasks = api(
         // Mark task as processing
         await updateTaskStatus({
           taskId: task.id,
-          status: "processing",
+          status: TaskStatus.PROCESSING,
         });
 
         // Process based on task type
@@ -115,7 +120,7 @@ export const processNextTranscriptionTasks = api(
         // Mark task as failed
         await updateTaskStatus({
           taskId: task.id,
-          status: "failed",
+          status: TaskStatus.FAILED,
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -147,8 +152,8 @@ async function processAudioTranscription(task: any): Promise<void> {
 
   // If we only have ID but no URL, get the audio URL first
   if (!input.audioUrl && input.audioId) {
-    const audioInfo = await media.getAudioInfo({ audioId: input.audioId });
-    input.audioUrl = audioInfo.audioUrl;
+    const audioInfo = await media.getMediaFile({ mediaId: input.audioId });
+    input.audioUrl = audioInfo.url;
   }
 
   if (!input.audioUrl) {
@@ -165,15 +170,16 @@ async function processAudioTranscription(task: any): Promise<void> {
   };
 
   // Process transcription
-  const transcriptionResult = await transcription.transcribeAudio({
-    audioUrl: input.audioUrl,
-    options,
+  const transcriptionResult = await transcription.transcribe({
+    audioFileId: input.audioId,
+
+    ...options,
   });
 
   // Update task with success
   await updateTaskStatus({
     taskId: task.id,
-    status: "completed",
+    status: TaskStatus.COMPLETED,
     output: {
       transcriptionId: transcriptionResult.transcriptionId,
       audioId: input.audioId,
@@ -223,7 +229,7 @@ async function processSpeakerDiarization(task: any): Promise<void> {
   // Update task with success
   await updateTaskStatus({
     taskId: task.id,
-    status: "completed",
+    status: TaskStatus.COMPLETED,
     output: {
       transcriptionId: input.transcriptionId,
       diarizationId: diarizationResult.diarizationId,
@@ -265,7 +271,7 @@ async function processTranscriptFormatting(task: any): Promise<void> {
   // Update task with success
   await updateTaskStatus({
     taskId: task.id,
-    status: "completed",
+    status: TaskStatus.COMPLETED,
     output: {
       transcriptionId: input.transcriptionId,
       format,
@@ -314,8 +320,8 @@ export const queueTranscription = api(
     // Create a batch for this transcription job
     const batch = await db.processingBatch.create({
       data: {
-        batchType: "transcription",
-        status: "queued",
+        batchType: BatchType.TRANSCRIPTION,
+        status: BatchStatus.QUEUED,
         priority,
         name: `Transcription: ${audioId}`,
         totalTasks: options?.detectSpeakers !== false ? 3 : 2, // Transcribe + Format + optional Diarize
@@ -333,7 +339,7 @@ export const queueTranscription = api(
       data: {
         batchId: batch.id,
         taskType: "audio_transcribe",
-        status: "queued",
+        status: TaskStatus.QUEUED,
         priority,
         input: {
           audioId,
@@ -357,9 +363,10 @@ export const queueTranscription = api(
         data: {
           batchId: batch.id,
           taskType: "speaker_diarize",
-          status: "queued",
+          status: TaskStatus.QUEUED,
           priority,
           input: {
+            taskType: "speaker_diarize",
             meetingRecordId,
           },
           meetingRecordId,
@@ -378,7 +385,7 @@ export const queueTranscription = api(
       data: {
         batchId: batch.id,
         taskType: "transcript_format",
-        status: "queued",
+        status: TaskStatus.QUEUED,
         priority,
         input: {
           meetingRecordId,
@@ -451,13 +458,14 @@ export const queueBatchTranscription = api(
     // Create a batch with transcription tasks
     const batch = await db.processingBatch.create({
       data: {
-        batchType: "transcription",
-        status: "queued",
+        batchType: BatchType.TRANSCRIPTION,
+        status: BatchStatus.QUEUED,
         priority,
         name: `Batch Transcription: ${audioIds.length} files`,
         totalTasks: audioIds.length,
         queuedTasks: audioIds.length,
         metadata: {
+          type: BatchType.TRANSCRIPTION,
           audioCount: audioIds.length,
           options,
         },
@@ -492,10 +500,11 @@ export const queueBatchTranscription = api(
     // Publish batch created event
     await batchCreated.publish({
       batchId: batch.id,
-      batchType: "transcription",
+      batchType: BatchType.TRANSCRIPTION,
       taskCount,
       metadata: {
         audioCount: audioIds.length,
+        type: BatchType.TRANSCRIPTION,
         options,
       },
       timestamp: new Date(),
@@ -520,7 +529,7 @@ export const queueBatchTranscription = api(
 const _ = new Subscription(batchCreated, "transcription-batch-processor", {
   handler: async (event) => {
     // Only process batches of type "transcription"
-    if (event.batchType !== "transcription") return;
+    if (event.batchType !== BatchType.TRANSCRIPTION) return;
 
     log.info(`Detected new transcription batch ${event.batchId}`, {
       batchId: event.batchId,
@@ -573,7 +582,7 @@ const __ = new Subscription(
           if (
             ["speaker_diarize", "transcript_format"].includes(task.taskType)
           ) {
-            const output = event.output || {};
+            const output = event.output;
 
             // Update the task input with the transcription ID
             await db.processingTask.update({
@@ -581,17 +590,17 @@ const __ = new Subscription(
               data: {
                 input: {
                   ...task.input,
-                  transcriptionId: output.transcriptionId,
+                  transcriptionId: output?.transcriptionId,
                 },
               },
             });
 
             log.info(
-              `Updated dependent task ${task.id} with transcription ID ${output.transcriptionId}`,
+              `Updated dependent task ${task.id} with transcription ID ${output?.transcriptionId}`,
               {
                 taskId: task.id,
                 taskType: task.taskType,
-                transcriptionId: output.transcriptionId,
+                transcriptionId: output?.transcriptionId,
               },
             );
           }

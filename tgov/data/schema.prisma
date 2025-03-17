@@ -19,33 +19,33 @@ datasource db {
 // Models related to TGov meeting data
 
 model Committee {
-  id            String         @id @default(ulid())
-  name          String         @unique
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  id             String          @id @default(ulid())
+  name           String          @unique
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
   meetingRecords MeetingRecord[]
 }
 
 model MeetingRecord {
-  id          String   @id @default(ulid())
-  name        String   @unique
-  startedAt   DateTime @db.Timestamptz(6)
-  endedAt     DateTime @db.Timestamptz(6)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  committeeId String
-  videoViewUrl String?
+  id            String   @id @default(ulid())
+  name          String   @unique
+  startedAt     DateTime @db.Timestamptz(6)
+  endedAt       DateTime @db.Timestamptz(6)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  committeeId   String
+  videoViewUrl  String?
   agendaViewUrl String?
-  
+
   ///[MeetingRawJSON]
-  rawJson     Json
+  rawJson Json
 
   // Foreign keys to link with other services
-  videoId     String?
-  audioId     String?
-  agendaId    String?
-  
-  committee   Committee @relation(fields: [committeeId], references: [id])
-  
+  videoId  String?
+  audioId  String?
+  agendaId String?
+
+  committee Committee @relation(fields: [committeeId], references: [id])
+
   @@unique([committeeId, startedAt])
 }
