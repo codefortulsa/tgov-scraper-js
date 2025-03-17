@@ -7,9 +7,9 @@
 import { db } from "./data";
 import { processMedia } from "./processor";
 
-import { tgov } from "~encore/clients";
+import { tgov, transcription } from "~encore/clients";
 
-import { api } from "encore.dev/api";
+import { api, APIError } from "encore.dev/api";
 import { CronJob } from "encore.dev/cron";
 import logger from "encore.dev/log";
 
@@ -313,6 +313,115 @@ export const processNextBatch = api(
 );
 
 /**
+ * Auto-queue unprocessed meeting videos for processing
+ * 
+ * This endpoint fetches recent meetings with video URLs that haven't been processed yet,
+ * queues them for video processing, and optionally initiates transcription jobs.
+ */
+export const autoQueueNewMeetings = api(
+  {
+    method: "POST",
+    path: "/api/videos/auto-queue",
+    expose: true,
+  },
+  async ({
+    daysBack = 30,
+    limit = 10,
+    autoTranscribe = true,
+  }: {
+    daysBack?: number;
+    limit?: number;
+    autoTranscribe?: boolean;
+  }): Promise<{
+    batchId?: string;
+    queuedMeetings: number;
+    transcriptionJobs: number;
+  }> => {
+    logger.info(`Searching for unprocessed meetings from past ${daysBack} days`);
+    
+    // Get recent meetings from TGov service
+    const { meetings } = await tgov.listMeetings({
+      limit: 100, // Get a larger batch to filter from
+    });
+    
+    // Filter for meetings with video URLs but no videoId (unprocessed)
+    const unprocessedMeetings = meetings.filter(
+      (meeting) => meeting.videoViewUrl && !meeting.videoId
+    );
+    
+    if (unprocessedMeetings.length === 0) {
+      logger.info("No unprocessed meetings found");
+      return { queuedMeetings: 0, transcriptionJobs: 0 };
+    }
+    
+    // Limit the number of meetings to process
+    const meetingsToProcess = unprocessedMeetings.slice(0, limit);
+    
+    logger.info(`Queueing ${meetingsToProcess.length} unprocessed meetings for video processing`);
+    
+    try {
+      // Queue the videos for processing
+      const response = await queueVideoBatch({
+        viewerUrls: meetingsToProcess.map(m => m.videoViewUrl!),
+        meetingRecordIds: meetingsToProcess.map(m => m.id),
+        extractAudio: true,
+      });
+      
+      logger.info(`Successfully queued batch ${response.batchId} with ${response.totalVideos} videos`);
+      
+      // Immediately process this batch
+      await processNextBatch({ batchSize: meetingsToProcess.length });
+      
+      // If autoTranscribe is enabled, wait for video processing and then queue transcriptions
+      let transcriptionJobsCreated = 0;
+      
+      if (autoTranscribe) {
+        // Give some time for video processing to complete
+        // In a production system, you might want a more sophisticated approach with callbacks
+        logger.info("Scheduling transcription jobs for processed videos");
+        
+        // Get the batch status after processing
+        const batchStatus = await getBatchStatus({ batchId: response.batchId });
+        
+        // Queue transcription for successfully processed videos
+        const completedTasks = batchStatus.tasks.filter(task => 
+          task.status === "completed" && task.audioId
+        );
+        
+        for (const task of completedTasks) {
+          try {
+            if (task.audioId) {
+              await transcription.transcribe({
+                audioFileId: task.audioId,
+                meetingRecordId: task.meetingRecordId,
+              });
+              transcriptionJobsCreated++;
+            }
+          } catch (error) {
+            logger.error(`Failed to create transcription job for task ${task.id}`, {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+        
+        logger.info(`Created ${transcriptionJobsCreated} transcription jobs`);
+      }
+      
+      return {
+        batchId: response.batchId,
+        queuedMeetings: meetingsToProcess.length,
+        transcriptionJobs: transcriptionJobsCreated,
+      };
+    } catch (error) {
+      logger.error("Failed to auto-queue meetings", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw APIError.internal("Failed to auto-queue meetings for processing");
+    }
+  },
+);
+
+/**
  * Automatic batch processing endpoint for cron job
  * // TODO: TEST THIS
  */
@@ -334,4 +443,14 @@ export const processBatchesCron = new CronJob("process-video-batches", {
   title: "Process Video Batches",
   schedule: "*/5 * * * *", // Every 5 minutes
   endpoint: autoProcessNextBatch,
+});
+
+/**
+ * Cron job to auto-queue new meetings for processing
+ * Runs daily at 3:00 AM to check for new unprocessed meetings
+ */
+export const autoQueueNewMeetingsCron = new CronJob("auto-queue-meetings", {
+  title: "Auto-Queue New Meeting Videos",
+  schedule: "0 3 * * *", // Daily at 3:00 AM
+  endpoint: autoQueueNewMeetings,
 });
