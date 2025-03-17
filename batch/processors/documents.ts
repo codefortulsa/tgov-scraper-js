@@ -94,15 +94,15 @@ export const processNextDocumentTasks = api(
 
         // Process based on task type
         switch (task.taskType) {
-          case "agenda_download":
+          case TaskType.AGENDA_DOWNLOAD:
             await processAgendaDownload(task);
             break;
 
-          case "document_download":
+          case TaskType.DOCUMENT_DOWNLOAD:
             await processDocumentDownload(task);
             break;
 
-          case "document_parse":
+          case TaskType.DOCUMENT_PARSE:
             await processDocumentParse(task);
             break;
 
@@ -325,7 +325,7 @@ export const queueAgendaBatch = api(
       await db.processingTask.create({
         data: {
           batchId: batch.id,
-          taskType: "agenda_download",
+          taskType: TaskType.AGENDA_DOWNLOAD,
           status: TaskStatus.QUEUED,
           priority,
           input: { meetingRecordId: meetingId, taskType: "agenda_download" },
@@ -340,7 +340,7 @@ export const queueAgendaBatch = api(
       batchType: BatchType.DOCUMENT,
       taskCount: meetingIds.length,
       metadata: {
-        type: "agenda_download",
+        type: TaskType.AGENDA_DOWNLOAD,
         meetingCount: meetingIds.length,
       },
       timestamp: new Date(),

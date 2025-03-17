@@ -1,4 +1,6 @@
-import { BatchType } from "@prisma/client/batch/index.js";
+import { TASK_TYPE_STRING_MAP } from "../constants";
+
+import { BatchType, TaskType } from "@prisma/client/batch/index.js";
 
 declare global {
   namespace PrismaJson {
@@ -8,28 +10,40 @@ declare global {
       | DocumentBatchMetadataJSON
       | TranscriptionBatchMetadataJSON;
 
-    type MediaBatchMetadataJSON = {
+    // Common fields shared across batch types
+    type BaseBatchMetadataJSON = {
+      // No need to duplicate the "type" field as it's already in the BatchType column
+      source?: string;
+      description?: string;
+    };
+
+    type MediaBatchMetadataJSON = BaseBatchMetadataJSON & {
       type: (typeof BatchType)["MEDIA"];
-      videoCount?: number;
-      audioCount?: number;
+      // Consolidated count fields
+      fileCount?: number;
       options?: {
-        extractAudio: boolean;
+        extractAudio?: boolean;
+        // Removed unnecessary nested options
       };
     };
 
-    type DocumentBatchMetadataJSON = {
+    type DocumentBatchMetadataJSON = BaseBatchMetadataJSON & {
       type: (typeof BatchType)["DOCUMENT"];
-      documentCount?: number;
+      fileCount?: number;
       documentTypes?: string[];
-      source?: string;
     };
 
-    type TranscriptionBatchMetadataJSON = {
+    type TranscriptionBatchMetadataJSON = BaseBatchMetadataJSON & {
       type: (typeof BatchType)["TRANSCRIPTION"];
-      audioCount?: number;
+      audioId?: string; // Single audio file reference
+      audioCount?: number; // Multiple audio files count
       options?: {
         language?: string;
         model?: string;
+        // Options moved from task-specific to batch level for consistency
+        detectSpeakers?: boolean;
+        wordTimestamps?: boolean;
+        format?: "json" | "txt" | "srt" | "vtt" | "html";
       };
     };
 
@@ -39,33 +53,63 @@ declare global {
       | DocumentTaskInputJSON
       | TranscriptionTaskInputJSON;
 
-    type MediaTaskInputJSON = {
-      taskType: "video_download" | "video_process" | "audio_extract";
+    // Define allowed string literals for task types using the mapping
+    type MediaTaskTypeString =
+      | (typeof TASK_TYPE_STRING_MAP)[TaskType.MEDIA_VIDEO_DOWNLOAD]
+      | (typeof TASK_TYPE_STRING_MAP)[TaskType.MEDIA_VIDEO_PROCESS]
+      | (typeof TASK_TYPE_STRING_MAP)[TaskType.MEDIA_AUDIO_EXTRACT];
+
+    type DocumentTaskTypeString =
+      | (typeof TASK_TYPE_STRING_MAP)[TaskType.DOCUMENT_DOWNLOAD]
+      | (typeof TASK_TYPE_STRING_MAP)[TaskType.DOCUMENT_CONVERT]
+      | (typeof TASK_TYPE_STRING_MAP)[TaskType.DOCUMENT_EXTRACT]
+      | (typeof TASK_TYPE_STRING_MAP)[TaskType.DOCUMENT_PARSE]
+      | (typeof TASK_TYPE_STRING_MAP)[TaskType.AGENDA_DOWNLOAD];
+
+    type TranscriptionTaskTypeString =
+      | (typeof TASK_TYPE_STRING_MAP)[TaskType.AUDIO_TRANSCRIBE]
+      | (typeof TASK_TYPE_STRING_MAP)[TaskType.SPEAKER_DIARIZE]
+      | (typeof TASK_TYPE_STRING_MAP)[TaskType.TRANSCRIPT_FORMAT];
+
+    // Base task input with common fields
+    type BaseTaskInputJSON = {
+      meetingRecordId?: string;
+    };
+
+    type MediaTaskInputJSON = BaseTaskInputJSON & {
+      taskType: MediaTaskTypeString;
       url?: string;
       viewerUrl?: string;
       fileId?: string;
-      meetingRecordId?: string;
       options?: {
-        extractAudio: boolean;
+        extractAudio?: boolean;
       };
     };
 
-    type DocumentTaskInputJSON = {
-      taskType: "document_download" | "document_convert" | "document_extract";
+    type DocumentTaskInputJSON = BaseTaskInputJSON & {
+      taskType: DocumentTaskTypeString;
       url?: string;
-      meetingRecordId?: string;
       title?: string;
       fileType?: string;
     };
 
-    type TranscriptionTaskInputJSON = {
-      taskType: "audio_transcribe" | "transcription_format" | "speaker_diarize";
+    type TranscriptionTaskInputJSON = BaseTaskInputJSON & {
+      taskType: TranscriptionTaskTypeString;
       audioFileId?: string;
-      meetingRecordId?: string;
+      transcriptionId?: string; // Added for dependent tasks
       options?: {
         language?: string;
         model?: string;
+        minSpeakers?: number;
+        maxSpeakers?: number;
+        format?: "json" | "txt" | "srt" | "vtt" | "html";
       };
+    };
+
+    // Base output type for common fields
+    type BaseTaskOutputJSON = {
+      id?: string;
+      processingTime?: number; // Added for performance tracking
     };
 
     // Task output types for different task types
@@ -74,8 +118,7 @@ declare global {
       | DocumentTaskOutputJSON
       | TranscriptionTaskOutputJSON;
 
-    type MediaTaskOutputJSON = {
-      id?: string;
+    type MediaTaskOutputJSON = BaseTaskOutputJSON & {
       videoId?: string;
       audioId?: string;
       url?: string;
@@ -84,8 +127,7 @@ declare global {
       mimeType?: string;
     };
 
-    type DocumentTaskOutputJSON = {
-      id?: string;
+    type DocumentTaskOutputJSON = BaseTaskOutputJSON & {
       documentId?: string;
       url?: string;
       mimeType?: string;
@@ -94,8 +136,7 @@ declare global {
       fileSize?: number;
     };
 
-    type TranscriptionTaskOutputJSON = {
-      id?: string;
+    type TranscriptionTaskOutputJSON = BaseTaskOutputJSON & {
       transcriptionId?: string;
       audioFileId?: string;
       language?: string;
@@ -103,6 +144,10 @@ declare global {
       wordCount?: number;
       speakerCount?: number;
       confidenceScore?: number;
+      diarizationId?: string;
+      format?: string;
+      outputUrl?: string;
+      byteSize?: number;
     };
 
     // Webhook payload structure
