@@ -1,101 +1,147 @@
 /**
- * Batch Service API Implementation
- * 
- * Provides centralized management of batch processing operations including:
- * - Creating and managing batches of tasks
- * - Processing tasks with dependencies
- * - Publishing events for completed operations
+ * Batch Processing Module
+ *
+ * Provides a unified system for batch task processing with:
+ * - Task queuing and scheduling
+ * - Asynchronous processing via pub/sub events
+ * - Task dependency management
+ * - Automatic retries and failure handling
  */
+import { db } from "./data";
+import { taskCompleted } from "./topics";
+
 import { api, APIError } from "encore.dev/api";
-import { CronJob } from "encore.dev/cron";
 import log from "encore.dev/log";
 
-import { db } from "./data";
-import { batchCreated, taskCompleted, batchStatusChanged } from "./topics";
+// Export processor implementations
+export * from "./processors/media";
+export * from "./processors/documents";
+export * from "./processors/transcription";
+export * from "./processors/manager";
 
 /**
- * Type definitions for batch operations
+ * Create a new task for batch processing
  */
+export const createTask = api(
+  {
+    method: "POST",
+    path: "/batch/task",
+    expose: true,
+  },
+  async (params: {
+    /**
+     * Batch ID to associate the task with
+     */
+    batchId?: string;
+
+    /**
+     * Type of task to create
+     */
+    taskType: string;
+
+    /**
+     * Task input data (specific to task type)
+     */
+    input: Record<string, any>;
+
+    /**
+     * Optional task priority (higher numbers = higher priority)
+     */
+    priority?: number;
+
+    /**
+     * Optional meeting record ID for association
+     */
+    meetingRecordId?: string;
+
+    /**
+     * Optional dependencies (task IDs that must complete first)
+     */
+    dependsOn?: string[];
+  }): Promise<{
+    taskId: string;
+  }> => {
+    const {
+      batchId,
+      taskType,
+      input,
+      priority = 0,
+      meetingRecordId,
+      dependsOn = [],
+    } = params;
+
+    try {
+      // If batchId is provided, verify it exists
+      if (batchId) {
+        const batch = await db.processingBatch.findUnique({
+          where: { id: batchId },
+        });
+
+        if (!batch) {
+          throw APIError.notFound(`Batch with ID ${batchId} not found`);
+        }
+      }
+
+      // Create the task
+      const task = await db.processingTask.create({
+        data: {
+          batchId,
+          taskType,
+          status: "queued",
+          priority,
+          input,
+          meetingRecordId,
+          // Create dependencies if provided
+          dependsOn:
+            dependsOn.length > 0 ?
+              {
+                createMany: {
+                  data: dependsOn.map((depId) => ({
+                    dependencyTaskId: depId,
+                  })),
+                },
+              }
+            : undefined,
+        },
+      });
+
+      // If task belongs to a batch, update batch counts
+      if (batchId) {
+        await db.processingBatch.update({
+          where: { id: batchId },
+          data: {
+            totalTasks: { increment: 1 },
+            queuedTasks: { increment: 1 },
+          },
+        });
+      }
+
+      log.info(`Created task ${task.id} of type ${taskType}`, {
+        taskId: task.id,
+        taskType,
+        batchId,
+        meetingRecordId,
+      });
+
+      return { taskId: task.id };
+    } catch (error) {
+      if (error instanceof APIError) {
+        throw error;
+      }
+
+      log.error(`Failed to create task of type ${taskType}`, {
+        taskType,
+        batchId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      throw APIError.internal("Failed to create task");
+    }
+  },
+);
 
 /**
- * Represents a task to be processed
- */
-export interface ProcessingTaskInput {
-  /**
-   * Type of task to perform
-   */
-  taskType: string;
-  
-  /**
-   * Priority of the task (higher values = higher priority)
-   */
-  priority?: number;
-  
-  /**
-   * Input data needed to process the task
-   */
-  input: Record<string, any>;
-  
-  /**
-   * Optional meeting record ID associated with this task
-   */
-  meetingRecordId?: string;
-  
-  /**
-   * IDs of tasks that must complete before this one can start
-   */
-  dependsOnTaskIds?: string[];
-  
-  /**
-   * Maximum number of retries for this task
-   */
-  maxRetries?: number;
-}
-
-/**
- * Response format for task information
- */
-export interface ProcessingTaskResponse {
-  id: string;
-  batchId: string;
-  taskType: string;
-  status: string;
-  priority: number;
-  input: Record<string, any>;
-  output?: Record<string, any>;
-  error?: string;
-  meetingRecordId?: string;
-  retryCount: number;
-  maxRetries: number;
-  startedAt?: Date;
-  completedAt?: Date;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-/**
- * Summary of a batch's status
- */
-export interface BatchSummary {
-  id: string;
-  name?: string;
-  batchType: string;
-  status: string;
-  taskSummary: {
-    total: number;
-    completed: number;
-    failed: number;
-    queued: number;
-    processing: number;
-  };
-  priority: number;
-  metadata?: Record<string, any>;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-/**
- * Creates a new batch with the given tasks
+ * Create a new batch for processing
  */
 export const createBatch = api(
   {
@@ -105,155 +151,65 @@ export const createBatch = api(
   },
   async (params: {
     /**
+     * Type of batch (media, document, transcription, etc.)
+     */
+    batchType: string;
+
+    /**
      * Optional name for the batch
      */
     name?: string;
-    
+
     /**
-     * Type of batch being created
-     */
-    batchType: string;
-    
-    /**
-     * Priority of the batch (higher values = higher priority)
+     * Optional priority (higher numbers = higher priority)
      */
     priority?: number;
-    
+
     /**
-     * Additional metadata for the batch
+     * Optional metadata for the batch
      */
     metadata?: Record<string, any>;
-    
-    /**
-     * Tasks to be included in this batch
-     */
-    tasks: ProcessingTaskInput[];
   }): Promise<{
     batchId: string;
-    tasks: ProcessingTaskResponse[];
   }> => {
-    const { name, batchType, priority = 0, metadata, tasks } = params;
-    
-    if (!tasks.length) {
-      throw APIError.invalidArgument("At least one task is required");
-    }
-    
+    const { batchType, name, priority = 0, metadata = {} } = params;
+
     try {
-      // Create the batch and all tasks in a transaction
-      const result = await db.$transaction(async (tx) => {
-        // Create the batch first
-        const batch = await tx.processingBatch.create({
-          data: {
-            name,
-            batchType,
-            status: "queued",
-            priority,
-            totalTasks: tasks.length,
-            queuedTasks: tasks.length,
-            metadata: metadata || {},
-          },
-        });
-        
-        // Create all tasks
-        const createdTasks = await Promise.all(
-          tasks.map(async (task) => {
-            return tx.processingTask.create({
-              data: {
-                batchId: batch.id,
-                taskType: task.taskType,
-                status: "queued",
-                priority: task.priority ?? priority,
-                input: task.input,
-                meetingRecordId: task.meetingRecordId,
-                maxRetries: task.maxRetries ?? 3,
-              },
-            });
-          })
-        );
-        
-        // Set up task dependencies if specified
-        const dependencyPromises: Promise<any>[] = [];
-        for (let i = 0; i < tasks.length; i++) {
-          const task = tasks[i];
-          if (task.dependsOnTaskIds?.length) {
-            // Find the actual task IDs in our created batch
-            for (const depId of task.dependsOnTaskIds) {
-              // Find the dependent task in our batch
-              const dependencyTask = createdTasks.find(t => 
-                // This works if the dependsOnTaskIds refers to indices in the input array
-                // Otherwise, the caller needs to ensure these IDs are valid
-                t.id === depId || createdTasks[parseInt(depId)]?.id
-              );
-              
-              if (dependencyTask) {
-                dependencyPromises.push(
-                  tx.taskDependency.create({
-                    data: {
-                      dependentTaskId: createdTasks[i].id,
-                      dependencyTaskId: dependencyTask.id,
-                    },
-                  })
-                );
-              }
-            }
-          }
-        }
-        
-        if (dependencyPromises.length > 0) {
-          await Promise.all(dependencyPromises);
-        }
-        
-        return { batch, tasks: createdTasks };
+      const batch = await db.processingBatch.create({
+        data: {
+          batchType,
+          name,
+          status: "queued",
+          priority,
+          metadata,
+          totalTasks: 0,
+          queuedTasks: 0,
+          processingTasks: 0,
+          completedTasks: 0,
+          failedTasks: 0,
+        },
       });
-      
-      // Publish batch created event
-      await batchCreated.publish({
-        batchId: result.batch.id,
+
+      log.info(`Created batch ${batch.id} of type ${batchType}`, {
+        batchId: batch.id,
         batchType,
-        taskCount: tasks.length,
-        metadata: metadata || {},
-        timestamp: new Date(),
-        sourceService: "batch",
+        name,
       });
-      
-      log.info(`Created batch ${result.batch.id} with ${tasks.length} tasks`, {
-        batchId: result.batch.id,
-        batchType,
-        taskCount: tasks.length,
-      });
-      
-      // Format the response
-      return {
-        batchId: result.batch.id,
-        tasks: result.tasks.map(task => ({
-          id: task.id,
-          batchId: task.batchId,
-          taskType: task.taskType,
-          status: task.status,
-          priority: task.priority,
-          input: task.input as Record<string, any>,
-          output: task.output as Record<string, any> | undefined,
-          error: task.error || undefined,
-          meetingRecordId: task.meetingRecordId || undefined,
-          retryCount: task.retryCount,
-          maxRetries: task.maxRetries,
-          startedAt: task.startedAt || undefined,
-          completedAt: task.completedAt || undefined,
-          createdAt: task.createdAt,
-          updatedAt: task.updatedAt,
-        })),
-      };
+
+      return { batchId: batch.id };
     } catch (error) {
-      log.error("Failed to create batch", {
+      log.error(`Failed to create batch of type ${batchType}`, {
+        batchType,
         error: error instanceof Error ? error.message : String(error),
       });
+
       throw APIError.internal("Failed to create batch");
     }
-  }
+  },
 );
 
 /**
- * Gets the status and summary of a specific batch
+ * Get batch status and task information
  */
 export const getBatchStatus = api(
   {
@@ -263,590 +219,298 @@ export const getBatchStatus = api(
   },
   async (params: {
     batchId: string;
-    includeTaskDetails?: boolean;
+    includeTasks?: boolean;
+    taskStatus?: string | string[];
+    taskLimit?: number;
   }): Promise<{
-    batch: BatchSummary;
-    tasks?: ProcessingTaskResponse[];
+    batch: {
+      id: string;
+      name?: string;
+      batchType: string;
+      status: string;
+      priority: number;
+      metadata: Record<string, any>;
+      createdAt: Date;
+      updatedAt: Date;
+      totalTasks: number;
+      queuedTasks: number;
+      processingTasks: number;
+      completedTasks: number;
+      failedTasks: number;
+    };
+    tasks?: Array<{
+      id: string;
+      taskType: string;
+      status: string;
+      priority: number;
+      input: Record<string, any>;
+      output?: Record<string, any>;
+      error?: string;
+      createdAt: Date;
+      updatedAt: Date;
+      completedAt?: Date;
+      retryCount: number;
+      meetingRecordId?: string;
+    }>;
   }> => {
-    const { batchId, includeTaskDetails = false } = params;
-    
+    const {
+      batchId,
+      includeTasks = false,
+      taskStatus,
+      taskLimit = 100,
+    } = params;
+
     try {
-      // Get the batch with task counts
+      // Get the batch
       const batch = await db.processingBatch.findUnique({
         where: { id: batchId },
       });
-      
+
       if (!batch) {
         throw APIError.notFound(`Batch with ID ${batchId} not found`);
       }
-      
-      // Get task counts for summary
-      const taskCounts = await db.processingTask.groupBy({
-        by: ['status'],
-        where: { batchId },
-        _count: {
-          id: true,
-        },
-      });
-      
-      // Create task summary
-      const taskSummary = {
-        total: batch.totalTasks,
-        completed: batch.completedTasks,
-        failed: batch.failedTasks,
-        queued: batch.queuedTasks,
-        processing: batch.processingTasks,
-      };
-      
-      const batchSummary: BatchSummary = {
-        id: batch.id,
-        name: batch.name || undefined,
-        batchType: batch.batchType,
-        status: batch.status,
-        taskSummary,
-        priority: batch.priority,
-        metadata: batch.metadata as Record<string, any> | undefined,
-        createdAt: batch.createdAt,
-        updatedAt: batch.updatedAt,
-      };
-      
-      const response: { batch: BatchSummary; tasks?: ProcessingTaskResponse[] } = {
-        batch: batchSummary,
-      };
-      
-      // Include task details if requested
-      if (includeTaskDetails) {
-        const tasks = await db.processingTask.findMany({
-          where: { batchId },
-          orderBy: [
-            { priority: 'desc' },
-            { createdAt: 'asc' },
-          ],
+
+      // If tasks are requested, fetch them
+      let tasks;
+      if (includeTasks) {
+        const where: any = { batchId };
+
+        // Filter by task status if provided
+        if (taskStatus) {
+          where.status =
+            Array.isArray(taskStatus) ? { in: taskStatus } : taskStatus;
+        }
+
+        tasks = await db.processingTask.findMany({
+          where,
+          orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+          take: taskLimit,
         });
-        
-        response.tasks = tasks.map(task => ({
+      }
+
+      return {
+        batch: {
+          id: batch.id,
+          name: batch.name || undefined,
+          batchType: batch.batchType,
+          status: batch.status,
+          priority: batch.priority,
+          metadata: batch.metadata,
+          createdAt: batch.createdAt,
+          updatedAt: batch.updatedAt,
+          totalTasks: batch.totalTasks,
+          queuedTasks: batch.queuedTasks,
+          processingTasks: batch.processingTasks,
+          completedTasks: batch.completedTasks,
+          failedTasks: batch.failedTasks,
+        },
+        tasks: tasks?.map((task) => ({
           id: task.id,
-          batchId: task.batchId,
           taskType: task.taskType,
           status: task.status,
           priority: task.priority,
-          input: task.input as Record<string, any>,
-          output: task.output as Record<string, any> | undefined,
+          input: task.input,
+          output: task.output || undefined,
           error: task.error || undefined,
-          meetingRecordId: task.meetingRecordId || undefined,
-          retryCount: task.retryCount,
-          maxRetries: task.maxRetries,
-          startedAt: task.startedAt || undefined,
-          completedAt: task.completedAt || undefined,
           createdAt: task.createdAt,
           updatedAt: task.updatedAt,
-        }));
-      }
-      
-      return response;
+          completedAt: task.completedAt || undefined,
+          retryCount: task.retryCount,
+          meetingRecordId: task.meetingRecordId || undefined,
+        })),
+      };
     } catch (error) {
       if (error instanceof APIError) {
         throw error;
       }
-      
-      log.error("Failed to get batch status", {
+
+      log.error(`Failed to get batch ${batchId} status`, {
         batchId,
         error: error instanceof Error ? error.message : String(error),
       });
-      
+
       throw APIError.internal("Failed to get batch status");
     }
-  }
+  },
 );
 
 /**
- * Updates a task's status and results
+ * Utility function to update the status of a task and handle batch counters
  */
-export const updateTaskStatus = api(
-  {
-    method: "PATCH",
-    path: "/batch/task/:taskId",
-    expose: false, // Internal API only
-  },
-  async (params: {
-    taskId: string;
-    status: "queued" | "processing" | "completed" | "failed";
-    output?: Record<string, any>;
-    error?: string;
-    completedAt?: Date;
-  }): Promise<{
-    success: boolean;
-    task: ProcessingTaskResponse;
-    taskUnlockedIds?: string[];
-  }> => {
-    const { taskId, status, output, error, completedAt } = params;
-    
-    try {
-      // Handle the task update in a transaction
-      const result = await db.$transaction(async (tx) => {
-        // Get the task
-        const task = await tx.processingTask.findUnique({
-          where: { id: taskId },
-          include: { batch: true },
+export async function updateTaskStatus(params: {
+  taskId: string;
+  status: string;
+  output?: Record<string, any>;
+  error?: string;
+}): Promise<void> {
+  const { taskId, status, output, error } = params;
+
+  // Start a transaction for updating task and batch
+  try {
+    await db.$transaction(async (tx) => {
+      // Get the current task
+      const task = await tx.processingTask.findUnique({
+        where: { id: taskId },
+      });
+
+      if (!task) {
+        throw new Error(`Task with ID ${taskId} not found`);
+      }
+
+      const oldStatus = task.status;
+
+      if (oldStatus === status) {
+        log.debug(`Task ${taskId} already has status ${status}`, {
+          taskId,
+          status,
         });
-        
-        if (!task) {
-          throw APIError.notFound(`Task with ID ${taskId} not found`);
+        return;
+      }
+
+      // Update the task
+      const updatedTask = await tx.processingTask.update({
+        where: { id: taskId },
+        data: {
+          status,
+          output: output !== undefined ? output : undefined,
+          error: error !== undefined ? error : undefined,
+          completedAt:
+            status === "completed" || status === "failed" ?
+              new Date()
+            : undefined,
+        },
+      });
+
+      // If the task belongs to a batch, update batch counters
+      if (task.batchId) {
+        const updateData: any = {};
+
+        // Decrement counter for old status
+        if (oldStatus === "queued") {
+          updateData.queuedTasks = { decrement: 1 };
+        } else if (oldStatus === "processing") {
+          updateData.processingTasks = { decrement: 1 };
         }
-        
-        // Prepare update data
-        const updateData: any = { status };
-        
-        if (output) {
-          updateData.output = output;
+
+        // Increment counter for new status
+        if (status === "queued") {
+          updateData.queuedTasks = { increment: 1 };
+        } else if (status === "processing") {
+          updateData.processingTasks = { increment: 1 };
+        } else if (status === "completed") {
+          updateData.completedTasks = { increment: 1 };
+        } else if (status === "failed") {
+          updateData.failedTasks = { increment: 1 };
         }
-        
-        if (error) {
-          updateData.error = error;
-        }
-        
-        if (status === "processing" && !task.startedAt) {
-          updateData.startedAt = new Date();
-        }
-        
-        if (status === "completed" || status === "failed") {
-          updateData.completedAt = completedAt || new Date();
-        }
-        
-        // Update the task
-        const updatedTask = await tx.processingTask.update({
-          where: { id: taskId },
+
+        // Update the batch
+        await tx.processingBatch.update({
+          where: { id: task.batchId },
           data: updateData,
         });
-        
-        // Update batch status counts
-        let batchUpdateData: any = {};
-        
-        if (task.status === "queued" && status !== "queued") {
-          batchUpdateData.queuedTasks = { decrement: 1 };
-        }
-        
-        if (task.status === "processing" && status !== "processing") {
-          batchUpdateData.processingTasks = { decrement: 1 };
-        }
-        
-        if (status === "processing" && task.status !== "processing") {
-          batchUpdateData.processingTasks = { increment: 1 };
-        }
-        
-        if (status === "completed" && task.status !== "completed") {
-          batchUpdateData.completedTasks = { increment: 1 };
-        }
-        
-        if (status === "failed" && task.status !== "failed") {
-          batchUpdateData.failedTasks = { increment: 1 };
-        }
-        
-        // Update batch if there are changes
-        if (Object.keys(batchUpdateData).length > 0) {
-          await tx.processingBatch.update({
-            where: { id: task.batchId },
-            data: batchUpdateData,
-          });
-        }
-        
-        // Check for task dependencies to unlock
-        let unlockedTasks: string[] = [];
-        
-        if (status === "completed") {
-          // Find tasks that depend on this one
-          const dependencies = await tx.taskDependency.findMany({
-            where: { dependencyTaskId: taskId },
-            include: {
-              dependentTask: true,
-            },
-          });
-          
-          // For each dependent task, check if all its dependencies are now satisfied
-          for (const dep of dependencies) {
-            const allDependencies = await tx.taskDependency.findMany({
-              where: { dependentTaskId: dep.dependentTaskId },
-              include: {
-                dependencyTask: true,
-              },
-            });
-            
-            // Check if all dependencies are completed
-            const allCompleted = allDependencies.every(
-              d => d.dependencyTask.status === "completed"
-            );
-            
-            if (allCompleted && dep.dependentTask.status === "queued") {
-              unlockedTasks.push(dep.dependentTaskId);
+
+        // Check if the batch is now complete
+        const batch = await tx.processingBatch.findUnique({
+          where: { id: task.batchId },
+          select: {
+            totalTasks: true,
+            completedTasks: true,
+            failedTasks: true,
+            queuedTasks: true,
+            processingTasks: true,
+            status: true,
+          },
+        });
+
+        if (batch) {
+          // Update batch status based on task completion
+          if (
+            batch.totalTasks > 0 &&
+            batch.completedTasks + batch.failedTasks === batch.totalTasks
+          ) {
+            // All tasks are either completed or failed
+            let batchStatus: string;
+
+            if (batch.failedTasks === 0) {
+              batchStatus = "completed"; // All tasks completed successfully
+            } else if (batch.completedTasks === 0) {
+              batchStatus = "failed"; // All tasks failed
+            } else {
+              batchStatus = "completed_with_errors"; // Mixed results
+            }
+
+            // Only update if status has changed
+            if (batch.status !== batchStatus) {
+              await tx.processingBatch.update({
+                where: { id: task.batchId },
+                data: { status: batchStatus },
+              });
             }
           }
         }
-        
-        // If this is the last task in the batch, update the batch status
-        const remainingTasks = await tx.processingTask.count({
-          where: {
-            batchId: task.batchId,
-            status: { in: ["queued", "processing"] },
-          },
-        });
-        
-        if (remainingTasks === 0) {
-          // All tasks are either completed or failed
-          const failedCount = await tx.processingTask.count({
-            where: {
-              batchId: task.batchId,
-              status: "failed",
-            },
-          });
-          
-          const newBatchStatus = failedCount > 0 ? "completed_with_errors" : "completed";
-          
-          await tx.processingBatch.update({
-            where: { id: task.batchId },
-            data: { status: newBatchStatus },
-          });
-        }
-        
-        return { task: updatedTask, unlockedTasks, batch: task.batch };
-      });
-      
-      // Publish task completed event (if the status is completed or failed)
+      }
+
+      // For completed or failed tasks, publish an event
       if (status === "completed" || status === "failed") {
         await taskCompleted.publish({
-          batchId: result.task.batchId,
-          taskId: result.task.id,
-          taskType: result.task.taskType,
+          taskId,
+          taskType: task.taskType,
+          batchId: task.batchId,
+          status,
           success: status === "completed",
-          errorMessage: result.task.error || undefined,
-          resourceIds: (result.task.output as Record<string, any>) || {},
-          meetingRecordId: result.task.meetingRecordId || undefined,
+          output: output || {},
+          error: error,
+          resourceIds: getResourceIds(output),
           timestamp: new Date(),
           sourceService: "batch",
         });
       }
-      
-      // If batch status changed, publish event
-      const batch = await db.processingBatch.findUnique({
-        where: { id: result.task.batchId },
-      });
-      
-      if (batch && (batch.status === "completed" || batch.status === "completed_with_errors")) {
-        await batchStatusChanged.publish({
-          batchId: batch.id,
-          status: batch.status as any,
-          taskSummary: {
-            total: batch.totalTasks,
-            completed: batch.completedTasks,
-            failed: batch.failedTasks,
-            queued: batch.queuedTasks,
-            processing: batch.processingTasks,
-          },
-          timestamp: new Date(),
-          sourceService: "batch",
-        });
-      }
-      
-      // Format task response
-      const taskResponse: ProcessingTaskResponse = {
-        id: result.task.id,
-        batchId: result.task.batchId,
-        taskType: result.task.taskType,
-        status: result.task.status,
-        priority: result.task.priority,
-        input: result.task.input as Record<string, any>,
-        output: result.task.output as Record<string, any> | undefined,
-        error: result.task.error || undefined,
-        meetingRecordId: result.task.meetingRecordId || undefined,
-        retryCount: result.task.retryCount,
-        maxRetries: result.task.maxRetries,
-        startedAt: result.task.startedAt || undefined,
-        completedAt: result.task.completedAt || undefined,
-        createdAt: result.task.createdAt,
-        updatedAt: result.task.updatedAt,
-      };
-      
-      return {
-        success: true,
-        task: taskResponse,
-        taskUnlockedIds: result.unlockedTasks,
-      };
-    } catch (error) {
-      if (error instanceof APIError) {
-        throw error;
-      }
-      
-      log.error("Failed to update task status", {
+
+      log.info(`Updated task ${taskId} status from ${oldStatus} to ${status}`, {
         taskId,
-        status,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      
-      throw APIError.internal("Failed to update task status");
-    }
-  }
-);
-
-/**
- * Lists the next available tasks for processing
- */
-export const getNextTasks = api(
-  {
-    method: "GET",
-    path: "/batch/tasks/next",
-    expose: false, // Internal API only
-  },
-  async (params: {
-    /**
-     * Number of tasks to retrieve
-     */
-    limit?: number;
-    
-    /**
-     * Types of tasks to include
-     */
-    taskTypes?: string[];
-  }): Promise<{
-    tasks: ProcessingTaskResponse[];
-  }> => {
-    const { limit = 10, taskTypes } = params;
-    
-    try {
-      // Find tasks that are queued and don't have pending dependencies
-      const tasksWithDependencies = await db.$transaction(async (tx) => {
-        // Get queued tasks with their dependencies
-        const queuedTasks = await tx.processingTask.findMany({
-          where: {
-            status: "queued",
-            ...(taskTypes ? { taskType: { in: taskTypes } } : {}),
-          },
-          orderBy: [
-            { priority: "desc" },
-            { createdAt: "asc" },
-          ],
-          take: limit * 2, // Fetch more than needed to account for filtering
-          include: {
-            dependsOn: {
-              include: {
-                dependencyTask: true,
-              },
-            },
-          },
-        });
-        
-        // Filter for tasks where all dependencies are complete
-        const availableTasks = queuedTasks.filter(task => {
-          if (task.dependsOn.length === 0) {
-            return true; // No dependencies
-          }
-          
-          // All dependencies must be completed
-          return task.dependsOn.every(dep => 
-            dep.dependencyTask.status === "completed"
-          );
-        });
-        
-        return availableTasks.slice(0, limit);
-      });
-      
-      // Map to the response format
-      const tasks = tasksWithDependencies.map(task => ({
-        id: task.id,
+        oldStatus,
+        newStatus: status,
         batchId: task.batchId,
-        taskType: task.taskType,
-        status: task.status,
-        priority: task.priority,
-        input: task.input as Record<string, any>,
-        output: task.output as Record<string, any> | undefined,
-        error: task.error || undefined,
-        meetingRecordId: task.meetingRecordId || undefined,
-        retryCount: task.retryCount,
-        maxRetries: task.maxRetries,
-        startedAt: task.startedAt || undefined,
-        completedAt: task.completedAt || undefined,
-        createdAt: task.createdAt,
-        updatedAt: task.updatedAt,
-      }));
-      
-      return { tasks };
-    } catch (error) {
-      log.error("Failed to get next tasks", {
-        error: error instanceof Error ? error.message : String(error),
       });
-      
-      throw APIError.internal("Failed to get next tasks");
-    }
+    });
+  } catch (error) {
+    log.error(`Failed to update task ${taskId} status to ${status}`, {
+      taskId,
+      status,
+      error: error instanceof Error ? error.message : String(error),
+    });
+
+    throw new Error(
+      `Failed to update task status: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
-);
+}
 
 /**
- * Lists available batches with optional filtering
+ * Extract important resource IDs from task output for event notifications
  */
-export const listBatches = api(
-  {
-    method: "GET",
-    path: "/batch",
-    expose: true,
-  },
-  async (params: {
-    /**
-     * Number of batches to retrieve
-     */
-    limit?: number;
-    
-    /**
-     * Offset for pagination
-     */
-    offset?: number;
-    
-    /**
-     * Filter by batch status
-     */
-    status?: string;
-    
-    /**
-     * Filter by batch type
-     */
-    batchType?: string;
-  }): Promise<{
-    batches: BatchSummary[];
-    total: number;
-  }> => {
-    const { limit = 10, offset = 0, status, batchType } = params;
-    
-    try {
-      // Build where clause
-      const where: any = {};
-      
-      if (status) {
-        where.status = status;
-      }
-      
-      if (batchType) {
-        where.batchType = batchType;
-      }
-      
-      // Get batches and count
-      const [batches, total] = await Promise.all([
-        db.processingBatch.findMany({
-          where,
-          orderBy: [
-            { priority: "desc" },
-            { createdAt: "desc" },
-          ],
-          take: limit,
-          skip: offset,
-        }),
-        db.processingBatch.count({ where }),
-      ]);
-      
-      // Map to response format
-      const batchSummaries = batches.map(batch => ({
-        id: batch.id,
-        name: batch.name || undefined,
-        batchType: batch.batchType,
-        status: batch.status,
-        taskSummary: {
-          total: batch.totalTasks,
-          completed: batch.completedTasks,
-          failed: batch.failedTasks,
-          queued: batch.queuedTasks,
-          processing: batch.processingTasks,
-        },
-        priority: batch.priority,
-        metadata: batch.metadata as Record<string, any> | undefined,
-        createdAt: batch.createdAt,
-        updatedAt: batch.updatedAt,
-      }));
-      
-      return {
-        batches: batchSummaries,
-        total,
-      };
-    } catch (error) {
-      log.error("Failed to list batches", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      
-      throw APIError.internal("Failed to list batches");
+function getResourceIds(output?: Record<string, any>): Record<string, string> {
+  if (!output) return {};
+
+  const resourceMap: Record<string, string> = {};
+
+  // Extract common resource IDs that might be present
+  const resourceFields = [
+    "id",
+    "audioId",
+    "videoId",
+    "transcriptionId",
+    "documentId",
+    "meetingId",
+    "meetingRecordId",
+    "diarizationId",
+  ];
+
+  for (const field of resourceFields) {
+    if (output[field] && typeof output[field] === "string") {
+      resourceMap[field] = output[field];
     }
   }
-);
 
-/**
- * Process the next batch of available tasks
- */
-export const processNextTasks = api(
-  {
-    method: "POST",
-    path: "/batch/tasks/process",
-    expose: true,
-  },
-  async (params: {
-    /**
-     * Number of tasks to process
-     */
-    limit?: number;
-    
-    /**
-     * Types of tasks to process
-     */
-    taskTypes?: string[];
-  }): Promise<{
-    processed: number;
-  }> => {
-    const { limit = 10, taskTypes } = params;
-    
-    try {
-      // Get next available tasks
-      const { tasks } = await getNextTasks({ limit, taskTypes });
-      
-      if (tasks.length === 0) {
-        return { processed: 0 };
-      }
-      
-      // Mark them as processing
-      let processed = 0;
-      
-      for (const task of tasks) {
-        try {
-          await updateTaskStatus({
-            taskId: task.id,
-            status: "processing",
-          });
-          
-          // TODO: In a real implementation, you'd dispatch these tasks to actual processors
-          // For now, we'll just log that we're processing them
-          log.info(`Processing task ${task.id} of type ${task.taskType}`, {
-            taskId: task.id,
-            taskType: task.taskType,
-            batchId: task.batchId,
-          });
-          
-          processed++;
-        } catch (error) {
-          log.error(`Failed to start processing task ${task.id}`, {
-            taskId: task.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-      
-      return { processed };
-    } catch (error) {
-      log.error("Failed to process next tasks", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      
-      throw APIError.internal("Failed to process next tasks");
-    }
-  }
-);
-
-/**
- * Scheduled job to process queued tasks
- */
-export const autoProcessNextTasksCron = new CronJob("auto-process-batch-tasks", {
-  title: "Auto-process batch tasks",
-  schedule: "*/2 * * * *", // Every 2 minutes
-  endpoint: processNextTasks,
-});
+  return resourceMap;
+}
