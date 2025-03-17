@@ -18,17 +18,12 @@ declare global {
     };
 
     type MediaBatchMetadataJSON = BaseBatchMetadataJSON & {
-      type: (typeof BatchType)["MEDIA"];
       // Consolidated count fields
       fileCount?: number;
-      options?: {
-        extractAudio?: boolean;
-        // Removed unnecessary nested options
-      };
+      extractAudio?: boolean;
     };
 
     type DocumentBatchMetadataJSON = BaseBatchMetadataJSON & {
-      type: (typeof BatchType)["DOCUMENT"];
       fileCount?: number;
       documentTypes?: string[];
     };
@@ -55,21 +50,21 @@ declare global {
 
     // Define allowed string literals for task types using the mapping
     type MediaTaskTypeString =
-      | (typeof TASK_TYPE_STRING_MAP)[TaskType.MEDIA_VIDEO_DOWNLOAD]
-      | (typeof TASK_TYPE_STRING_MAP)[TaskType.MEDIA_VIDEO_PROCESS]
-      | (typeof TASK_TYPE_STRING_MAP)[TaskType.MEDIA_AUDIO_EXTRACT];
+      | (typeof TASK_TYPE_STRING_MAP)[(typeof TaskType)["MEDIA_VIDEO_DOWNLOAD"]]
+      | (typeof TASK_TYPE_STRING_MAP)[(typeof TaskType)["MEDIA_VIDEO_PROCESS"]]
+      | (typeof TASK_TYPE_STRING_MAP)[(typeof TaskType)["MEDIA_AUDIO_EXTRACT"]];
 
     type DocumentTaskTypeString =
-      | (typeof TASK_TYPE_STRING_MAP)[TaskType.DOCUMENT_DOWNLOAD]
-      | (typeof TASK_TYPE_STRING_MAP)[TaskType.DOCUMENT_CONVERT]
-      | (typeof TASK_TYPE_STRING_MAP)[TaskType.DOCUMENT_EXTRACT]
-      | (typeof TASK_TYPE_STRING_MAP)[TaskType.DOCUMENT_PARSE]
-      | (typeof TASK_TYPE_STRING_MAP)[TaskType.AGENDA_DOWNLOAD];
+      | (typeof TASK_TYPE_STRING_MAP)[(typeof TaskType)["DOCUMENT_DOWNLOAD"]]
+      | (typeof TASK_TYPE_STRING_MAP)[(typeof TaskType)["DOCUMENT_CONVERT"]]
+      | (typeof TASK_TYPE_STRING_MAP)[(typeof TaskType)["DOCUMENT_EXTRACT"]]
+      | (typeof TASK_TYPE_STRING_MAP)[(typeof TaskType)["DOCUMENT_PARSE"]]
+      | (typeof TASK_TYPE_STRING_MAP)[(typeof TaskType)["AGENDA_DOWNLOAD"]];
 
     type TranscriptionTaskTypeString =
-      | (typeof TASK_TYPE_STRING_MAP)[TaskType.AUDIO_TRANSCRIBE]
-      | (typeof TASK_TYPE_STRING_MAP)[TaskType.SPEAKER_DIARIZE]
-      | (typeof TASK_TYPE_STRING_MAP)[TaskType.TRANSCRIPT_FORMAT];
+      | (typeof TASK_TYPE_STRING_MAP)[(typeof TaskType)["AUDIO_TRANSCRIBE"]]
+      | (typeof TASK_TYPE_STRING_MAP)[(typeof TaskType)["SPEAKER_DIARIZE"]]
+      | (typeof TASK_TYPE_STRING_MAP)[(typeof TaskType)["TRANSCRIPT_FORMAT"]];
 
     // Base task input with common fields
     type BaseTaskInputJSON = {
