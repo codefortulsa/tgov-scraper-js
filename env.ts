@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import dotenv from "@dotenvx/dotenvx";
 import * as v from "valibot";
 
@@ -31,6 +33,7 @@ const Env = v.looseObject({
   ),
   CHROMIUM_PATH: v.optional(v.string()),
   OPENAI_API_KEY: v.string(),
+  TMP_DIR: v.optional(v.string(), "." + path.sep + "tmp"),
 });
 
 const env = v.parse(Env, process.env);

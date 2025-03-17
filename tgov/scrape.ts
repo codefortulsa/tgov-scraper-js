@@ -77,13 +77,22 @@ export async function scrapeIndex(): Promise<void> {
            *
            * ? For a detailed breakdown, or to change/debug, see: https://regex101.com/r/mdvRB3/1
            */
-          const videoViewUrl =
-            /^window\.open\((?<quot>['"])(?<url>.+?)(?<!\\)\k<quot>.*\)$/.exec(
-              videoEl?.getAttribute("onclick") || "",
-            )?.groups?.url ||
-            videoEl?.getAttribute("href") ||
-            undefined;
-          const agendaViewUrl = agendaEl?.getAttribute("href") || undefined;
+          const parser =
+            /^window\.open\((?<quot>['"])(?<url>.+?)(?<!\\)\k<quot>.*\)$/;
+
+          const base = new URL(window.location.href).origin;
+
+          let videoViewUrl;
+          videoViewUrl = parser.exec(videoEl?.getAttribute("onclick") || "");
+          videoViewUrl = videoViewUrl?.groups?.url;
+          videoViewUrl ||= videoEl?.getAttribute("href");
+          videoViewUrl &&= new URL(videoViewUrl, base).href;
+          videoViewUrl ??= undefined;
+
+          let agendaViewUrl;
+          agendaViewUrl = agendaEl?.getAttribute("href");
+          agendaViewUrl &&= new URL(agendaViewUrl, base).href;
+          agendaViewUrl ??= undefined;
 
           let clipId;
 
@@ -99,8 +108,8 @@ export async function scrapeIndex(): Promise<void> {
             name,
             date,
             duration,
-            agendaViewUrl,
             videoViewUrl,
+            agendaViewUrl,
           });
         }
       }

@@ -5,10 +5,11 @@
  */
 import crypto from "crypto";
 import fs from "fs/promises";
+import path from "node:path";
 
+import env from "../env";
 import { bucket_meta, db, recordings } from "./data";
-import { downloadVideo } from "./downloader";
-import { extractAudioTrack } from "./extractor";
+import { downloadVideo, downloadVideoWithAudioExtraction } from "./downloader";
 
 import logger from "encore.dev/log";
 
@@ -42,13 +43,13 @@ export async function processMedia(
 ): Promise<ProcessedMediaResult> {
   const {
     filename = `video_${Date.now()}`,
-    extractAudio = false,
+    extractAudio = true,
     meetingRecordId,
   } = options;
 
   // Generate unique keys for cloud storage
-  const videoFilename = `${filename}_video`;
-  const audioFilename = `${filename}_audio`;
+  const videoFilename = `${filename}.mp4`;
+  const audioFilename = `${filename}.mp3`;
 
   // Hash the URL to use as part of the key
   const urlHash = crypto
@@ -63,30 +64,29 @@ export async function processMedia(
   logger.info(`Video key: ${videoKey}`);
   if (extractAudio) logger.info(`Audio key: ${audioKey}`);
 
-  // Create a temporary directory for processing if needed
-  const tempDir = `/tmp/${Date.now()}_${urlHash}`;
-  const videoTempPath = `${tempDir}/${videoFilename}`;
-  const audioTempPath =
-    extractAudio ? `${tempDir}/${audioFilename}` : undefined;
+  const tempDir = await fs.mkdtemp(
+    env.TMP_DIR + path.sep + `media-processor-${filename}-`,
+  );
 
   try {
+    // Create a temporary directory for processing if needed
+    await fs.mkdir(env.TMP_DIR, { recursive: true });
+
+    const videoPath = path.join(`${tempDir}`, `${videoFilename}`);
+    const audioPath =
+      extractAudio ? path.join(`${tempDir}`, `${audioFilename}`) : undefined;
     // Create temp directory
     await fs.mkdir(tempDir, { recursive: true });
 
-    // Step 1: Download the video to temporary location
-    logger.info(`Downloading video to temp location: ${videoTempPath}`);
-    await downloadVideo(url, videoTempPath);
+    // Step 1: Download the video/audio to temporary location
+    logger.info(`Downloading video to temp location: ${videoPath}`);
+    if (!audioPath) await downloadVideo(url, videoPath);
+    else await downloadVideoWithAudioExtraction(url, videoPath, audioPath);
 
-    // Step 2: Extract audio if requested
-    if (extractAudio && audioTempPath) {
-      logger.info(`Extracting audio to temp location: ${audioTempPath}`);
-      await extractAudioTrack(videoTempPath, audioTempPath);
-    }
-
-    // Step 3: Upload files to storage and save to database
+    // Step 2: Upload files to storage and save to database
     const result = await uploadAndSaveToDb(
-      videoTempPath,
-      audioTempPath,
+      videoPath,
+      audioPath,
       videoKey,
       audioKey,
       url,

@@ -4,7 +4,7 @@ import { TranscriptionSegment } from "./index";
 
 import logger from "encore.dev/log";
 
-import OpenAI from "openai";
+import OpenAI from "openai/index.js";
 
 export interface WhisperClientOptions {
   apiKey: string;

@@ -3,10 +3,12 @@
  *
  * Provides functions for downloading videos from various sources, including m3u8 streams.
  */
-import ffmpeg from "fluent-ffmpeg";
 import fs from "fs/promises";
 import path from "path";
+
 import logger from "encore.dev/log";
+
+import ffmpeg from "fluent-ffmpeg";
 
 // The types for progress and codec data from fluent-ffmpeg
 export interface ProgressData {
@@ -29,15 +31,15 @@ export interface ProgressData {
 export async function downloadVideo(
   url: string,
   outputPath: string,
-  progressCallback?: (progress: ProgressData) => void
+  progressCallback?: (progress: ProgressData) => void,
 ): Promise<void> {
   // Ensure output directory exists
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
   return new Promise<void>((resolve, reject) => {
-    const command = ffmpeg(url)
+    const command = ffmpeg()
+      .addInput(url)
       .inputOptions("-protocol_whitelist", "file,http,https,tcp,tls,crypto")
-      .outputOptions("-c", "copy")
       .output(outputPath);
 
     if (progressCallback) {
@@ -45,7 +47,7 @@ export async function downloadVideo(
     } else {
       command.on("progress", (progress) => {
         logger.info(
-          `Download progress: ${progress.percent?.toFixed(2)}% complete`
+          `Download progress: ${progress.percent?.toFixed(2)}% complete`,
         );
       });
     }
@@ -77,28 +79,24 @@ export async function downloadVideo(
 export async function downloadVideoWithAudioExtraction(
   url: string,
   videoOutputPath: string,
-  audioOutputPath: string
+  audioOutputPath: string,
 ): Promise<void> {
   // Ensure output directories exist
   await fs.mkdir(path.dirname(videoOutputPath), { recursive: true });
   await fs.mkdir(path.dirname(audioOutputPath), { recursive: true });
 
   return new Promise<void>((resolve, reject) => {
-    ffmpeg(url)
+    ffmpeg()
+      .addInput(url)
       .inputOptions("-protocol_whitelist", "file,http,https,tcp,tls,crypto")
       // Output 1: Video file with video and audio
       .output(videoOutputPath)
-      .outputOptions("-c", "copy")
-
       // Output 2: Audio file with just audio
       .output(audioOutputPath)
-      .outputOptions("-vn") // No video
-      .outputOptions("-acodec", "libmp3lame") // Use MP3 codec
-      .outputOptions("-ab", "128k") // Audio bitrate
-
+      .withNoVideo()
       .on("progress", (progress) => {
         logger.info(
-          `Download progress: ${progress.percent?.toFixed(2)}% complete`
+          `Download progress: ${progress.percent?.toFixed(2)}% complete`,
         );
       })
       .on("end", () => {

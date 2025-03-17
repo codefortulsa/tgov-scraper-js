@@ -26,11 +26,9 @@
     "@types/node": "22.13.10",
     "@types/react": "^18",
     "@types/react-dom": "^18",
-    "@types/uuid": "^10.0.0",
     "prettier": "^3.5.3",
     "prisma-json-types-generator": "^3.2.2",
     "typescript": "^5.2.2",
-    "uuid": "^11.1.0",
     "vitest": "3.0.8"
   },
   "dependencies": {
@@ -43,7 +41,7 @@
     "astro": "^5.4.2",
     "csv-parse": "^5.6.0",
     "date-fns": "^4.1.0",
-    "encore.dev": "^1.46.6",
+    "encore.dev": "^1.46.7",
     "ffmpeg": "^0.0.4",
     "file-type": "^20.4.0",
     "fluent-ffmpeg": "2.1.3",

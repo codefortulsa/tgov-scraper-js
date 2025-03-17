@@ -1,16 +1,11 @@
 import { PrismaClient } from "@prisma/client/transcription/index.js";
 
-let prisma: PrismaClient;
+import { SQLDatabase } from "encore.dev/storage/sqldb";
 
-if (process.env.NODE_ENV === "production") {
-  prisma = new PrismaClient();
-} else {
-  // In development, create a single instance of Prisma Client
-  const globalForPrisma = global as unknown as { prisma: PrismaClient };
-  if (!globalForPrisma.prisma) {
-    globalForPrisma.prisma = new PrismaClient();
-  }
-  prisma = globalForPrisma.prisma;
-}
+// Define the database connection
+const psql = new SQLDatabase("transcription", {
+  migrations: { path: "./migrations", source: "prisma" },
+});
 
-export { prisma };
+// Initialize Prisma client with the Encore-managed connection string
+export const db = new PrismaClient({ datasourceUrl: psql.connectionString });

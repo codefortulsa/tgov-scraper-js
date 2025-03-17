@@ -1,4 +1,4 @@
-import { prisma } from "./data";
+import { db } from "./data";
 
 import { api, APIError } from "encore.dev/api";
 import log from "encore.dev/log";
@@ -91,7 +91,7 @@ export const getMediaFile = api(
     const { mediaId } = req;
 
     try {
-      const mediaFile = await prisma.mediaFile.findUnique({
+      const mediaFile = await db.mediaFile.findUnique({
         where: { id: mediaId },
       });
 

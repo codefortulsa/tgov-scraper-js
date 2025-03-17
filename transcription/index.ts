@@ -1,9 +1,10 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { Readable } from "stream";
 
 import env from "../env";
-import { prisma } from "./data";
+import { db } from "./data";
 import { WhisperClient } from "./whisperClient";
 
 import { media } from "~encore/clients";
@@ -214,7 +215,7 @@ export const transcribe = api(
 
     // Create a transcription job in the database
     try {
-      const job = await prisma.transcriptionJob.create({
+      const job = await db.transcriptionJob.create({
         data: {
           status: "queued",
           priority: priority || 0,
@@ -267,7 +268,7 @@ export const getJobStatus = api(
     const { jobId } = req;
 
     try {
-      const job = await prisma.transcriptionJob.findUnique({
+      const job = await db.transcriptionJob.findUnique({
         where: { id: jobId },
       });
 
@@ -307,7 +308,7 @@ export const getTranscription = api(
     const { transcriptionId } = req;
 
     try {
-      const transcription = await prisma.transcription.findUnique({
+      const transcription = await db.transcription.findUnique({
         where: { id: transcriptionId },
         include: { segments: true },
       });
@@ -359,36 +360,40 @@ export const getMeetingTranscriptions = api(
     path: "/meetings/:meetingId/transcriptions",
     expose: true,
   },
-  async (req: { meetingId: string }): Promise<TranscriptionResult[]> => {
+  async (req: {
+    meetingId: string;
+  }): Promise<{ transcriptions: TranscriptionResult[] }> => {
     const { meetingId } = req;
 
     try {
-      const transcriptions = await prisma.transcription.findMany({
+      const transcriptions = await db.transcription.findMany({
         where: { meetingRecordId: meetingId },
         include: { segments: true },
       });
 
-      return transcriptions.map((transcription) => ({
-        id: transcription.id,
-        text: transcription.text,
-        language: transcription.language || undefined,
-        model: transcription.model,
-        confidence: transcription.confidence || undefined,
-        processingTime: transcription.processingTime || undefined,
-        status: transcription.status as TranscriptionStatus,
-        error: transcription.error || undefined,
-        createdAt: transcription.createdAt,
-        updatedAt: transcription.updatedAt,
-        audioFileId: transcription.audioFileId,
-        meetingRecordId: transcription.meetingRecordId || undefined,
-        segments: transcription.segments.map((segment) => ({
-          index: segment.index,
-          start: segment.start,
-          end: segment.end,
-          text: segment.text,
-          confidence: segment.confidence || undefined,
+      return {
+        transcriptions: transcriptions.map((transcription) => ({
+          id: transcription.id,
+          text: transcription.text,
+          language: transcription.language || undefined,
+          model: transcription.model,
+          confidence: transcription.confidence || undefined,
+          processingTime: transcription.processingTime || undefined,
+          status: transcription.status as TranscriptionStatus,
+          error: transcription.error || undefined,
+          createdAt: transcription.createdAt,
+          updatedAt: transcription.updatedAt,
+          audioFileId: transcription.audioFileId,
+          meetingRecordId: transcription.meetingRecordId || undefined,
+          segments: transcription.segments.map((segment) => ({
+            index: segment.index,
+            start: segment.start,
+            end: segment.end,
+            text: segment.text,
+            confidence: segment.confidence || undefined,
+          })),
         })),
-      }));
+      };
     } catch (error) {
       log.error("Failed to get meeting transcriptions", {
         meetingId,
@@ -408,7 +413,7 @@ export const processQueuedJobs = api(
     expose: false,
   },
   async (): Promise<{ processed: number }> => {
-    const queuedJobs = await prisma.transcriptionJob.findMany({
+    const queuedJobs = await db.transcriptionJob.findMany({
       where: {
         status: "queued",
       },
@@ -447,7 +452,7 @@ export const jobProcessorCron = new CronJob("transcription-job-processor", {
 async function processJob(jobId: string): Promise<void> {
   // Mark the job as processing
   try {
-    await prisma.transcriptionJob.update({
+    await db.transcriptionJob.update({
       where: { id: jobId },
       data: { status: "processing" },
     });
@@ -463,7 +468,7 @@ async function processJob(jobId: string): Promise<void> {
 
   try {
     // Get the job details
-    const job = await prisma.transcriptionJob.findUnique({
+    const job = await db.transcriptionJob.findUnique({
       where: { id: jobId },
     });
 
@@ -472,7 +477,9 @@ async function processJob(jobId: string): Promise<void> {
     }
 
     // Get the audio file details from the media service
-    const audioFile = await media.getMediaFile({ mediaId: job.audioFileId });
+    const audioFile = await media.getMediaFile({
+      mediaId: job.audioFileId,
+    });
 
     if (!audioFile || !audioFile.url) {
       throw new Error(`Audio file ${job.audioFileId} not found or has no URL`);
@@ -515,7 +522,8 @@ async function processJob(jobId: string): Promise<void> {
       : undefined;
 
     // Create the transcription record
-    const transcription = await prisma.transcription.create({
+    const transcription = await db.transcription.create({
+      include: { segments: true },
       data: {
         text: whisperResponse.text,
         language: whisperResponse.language,
@@ -539,7 +547,7 @@ async function processJob(jobId: string): Promise<void> {
     });
 
     // Update the job with the transcription ID
-    await prisma.transcriptionJob.update({
+    await db.transcriptionJob.update({
       where: { id: jobId },
       data: {
         status: "completed",
@@ -550,7 +558,7 @@ async function processJob(jobId: string): Promise<void> {
     log.info(`Completed transcription job ${jobId}`, {
       jobId,
       transcriptionId: transcription.id,
-      segments: transcription.segments ? "created" : "none",
+      segments: transcription.segments.length > 0 ? "created" : "none",
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -560,7 +568,7 @@ async function processJob(jobId: string): Promise<void> {
     });
 
     // Update the job with the error
-    await prisma.transcriptionJob.update({
+    await db.transcriptionJob.update({
       where: { id: jobId },
       data: {
         status: "failed",
@@ -610,10 +618,13 @@ async function downloadFile(url: string, destination: string): Promise<void> {
         return;
       }
 
-      const responseStream = response.body;
+      // Convert Web ReadableStream to Node Readable stream
+      const readableStream = Readable.fromWeb(
+        response.body as import("stream/web").ReadableStream,
+      );
       const writableStream = fs.createWriteStream(destination);
 
-      responseStream.pipe(writableStream);
+      readableStream.pipe(writableStream);
 
       writableStream.on("finish", () => {
         resolve();
