@@ -228,3 +228,88 @@ export const listCommittees = api(
     }
   },
 );
+
+/**
+ * Get a single meeting by ID with all related details
+ */
+export const getMeeting = api(
+  {
+    auth: false,
+    expose: true,
+    method: "GET",
+    path: "/tgov/meetings/:id",
+  },
+  async (params: {
+    id: string;
+  }): Promise<{
+    meeting: {
+      id: string;
+      name: string;
+      startedAt: Date;
+      endedAt: Date;
+      committee: { id: string; name: string };
+      videoViewUrl?: string;
+      agendaViewUrl?: string;
+      videoId?: string;
+      audioId?: string;
+      agendaId?: string;
+      rawJson: string;
+      createdAt: Date;
+      updatedAt: Date;
+    };
+  }> => {
+    const { id } = params;
+
+    try {
+      // Get the meeting with its committee relation
+      const meeting = await db.meetingRecord.findUnique({
+        where: { id },
+        include: {
+          committee: true,
+        },
+      });
+
+      if (!meeting) {
+        log.info("Meeting not found", { meetingId: id });
+        throw APIError.notFound(`Meeting with ID ${id} not found`);
+      }
+
+      log.debug("Retrieved meeting details", {
+        meetingId: id,
+        committeeName: meeting.committee.name,
+      });
+
+      return {
+        meeting: {
+          id: meeting.id,
+          name: meeting.name,
+          startedAt: meeting.startedAt,
+          endedAt: meeting.endedAt,
+          committee: {
+            id: meeting.committee.id,
+            name: meeting.committee.name,
+          },
+          videoViewUrl: meeting.videoViewUrl || undefined,
+          agendaViewUrl: meeting.agendaViewUrl || undefined,
+          videoId: meeting.videoId || undefined,
+          audioId: meeting.audioId || undefined,
+          agendaId: meeting.agendaId || undefined,
+          rawJson: JSON.stringify(meeting.rawJson),
+          createdAt: meeting.createdAt,
+          updatedAt: meeting.updatedAt,
+        },
+      };
+    } catch (error) {
+      if (error instanceof APIError) {
+        throw error; // Rethrow API errors like NotFound
+      }
+
+      log.error("Failed to get meeting", {
+        meetingId: id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      throw APIError.internal(`Failed to get meeting details for ID ${id}`);
+    }
+  },
+);
