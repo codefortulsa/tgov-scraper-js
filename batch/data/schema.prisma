@@ -13,19 +13,54 @@ datasource db {
     url      = env("BATCH_DATABASE_URL")
 }
 
+enum BatchStatus {
+    QUEUED
+    PROCESSING
+    COMPLETED
+    COMPLETED_WITH_ERRORS
+    FAILED
+}
+
+enum TaskStatus {
+    QUEUED
+    PROCESSING
+    COMPLETED
+    COMPLETED_WITH_ERRORS
+    FAILED
+}
+
+enum BatchType {
+    MEDIA
+    DOCUMENT
+    TRANSCRIPTION
+}
+
+enum TaskType {
+    TRANSCRIBE
+    EXTRACT_TEXT
+    EXTRACT_METADATA
+}
+
+enum EventType {
+    BATCH_CREATED
+    TASK_COMPLETED
+    BATCH_STATUS_CHANGED
+}
+
 // Represents a batch of processing tasks
 model ProcessingBatch {
     id              String           @id @default(cuid())
     name            String?
-    batchType       String // "media", "document", "transcription"
-    status          String // "queued", "processing", "completed", "failed", "completed_with_errors"
+    batchType       BatchType // Type of batch (media, document, transcription, etc.)
+    status          BatchStatus // queued, processing, completed, completed_with_errors, failed
     totalTasks      Int              @default(0)
     completedTasks  Int              @default(0)
     failedTasks     Int              @default(0)
     queuedTasks     Int              @default(0)
     processingTasks Int              @default(0)
     priority        Int              @default(0)
-    metadata        Json? // Additional batch metadata
+    ///[BatchMetadataJSON]
+    metadata        Json? // Additional metadata about the batch
     createdAt       DateTime         @default(now())
     updatedAt       DateTime         @updatedAt
     tasks           ProcessingTask[]
@@ -38,13 +73,15 @@ model ProcessingTask {
     id              String           @id @default(cuid())
     batchId         String?
     batch           ProcessingBatch? @relation(fields: [batchId], references: [id])
-    taskType        String // "video_download", "audio_extract", "document_download", "transcription", etc.
-    status          String // "queued", "processing", "completed", "failed"
+    taskType        TaskType // Type of task to perform
+    status          TaskStatus // queued, processing, completed, failed
     retryCount      Int              @default(0)
     maxRetries      Int              @default(3)
     priority        Int              @default(0)
-    input           Json // Input data for the task (URLs, IDs, parameters)
-    output          Json? // Output data from the task (IDs of created resources, etc.)
+    ///[TaskInputJSON]
+    input           Json // Input parameters for the task
+    ///[TaskOutputJSON]
+    output          Json? // Output results from the task
     error           String? // Error message if the task failed
     meetingRecordId String? // Optional reference to a meeting record
     startedAt       DateTime? // When processing started
@@ -75,14 +112,14 @@ model TaskDependency {
 
 // Represents a webhook endpoint for batch event notifications
 model WebhookSubscription {
-    id         String   @id @default(cuid())
+    id         String      @id @default(cuid())
     name       String
     url        String
     secret     String? // For signing the webhook requests
-    eventTypes String[] // Which events to send ("batch-created", "task-completed", "batch-status-changed")
-    active     Boolean  @default(true)
-    createdAt  DateTime @default(now())
-    updatedAt  DateTime @updatedAt
+    eventTypes EventType[] // Which events to send ("batch-created", "task-completed", "batch-status-changed")
+    active     Boolean     @default(true)
+    createdAt  DateTime    @default(now())
+    updatedAt  DateTime    @updatedAt
 
     @@index([active])
 }
@@ -92,7 +129,8 @@ model WebhookDelivery {
     id              String    @id @default(cuid())
     webhookId       String
     eventType       String
-    payload         Json
+    ///[WebhookPayloadJSON]
+    payload         Json // Webhook payload
     responseStatus  Int?
     responseBody    String?
     error           String?

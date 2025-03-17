@@ -433,24 +433,44 @@ export const autoQueueNewMeetings = api(
  * Automatic batch processing endpoint for cron job
  * // TODO: TEST THIS
  */
-export const autoProcessNextBatch = api(
+export const processNextBatchCronTarget = api(
   {
     method: "POST",
     path: "/api/videos/batch/auto-process",
     expose: true,
   },
   async () => {
-    return processNextBatch({});
+    return processNextBatch({ batchSize: 5 });
+  },
+);
+
+/**
+ * Auto-queue new meetings without parameters - wrapper for cron job
+ * // TODO: TEST THIS
+ */
+export const autoQueueNewMeetingsCronTarget = api(
+  {
+    method: "POST",
+    path: "/api/videos/auto-queue/cron",
+    expose: false,
+  },
+  async () => {
+    // Call with default parameters
+    return autoQueueNewMeetings({
+      daysBack: 30,
+      limit: 10,
+      autoTranscribe: true,
+    });
   },
 );
 
 /**
  * Cron job to process video batches
  */
-export const processBatchesCron = new CronJob("process-video-batches", {
+export const autoProcessNextBatchCron = new CronJob("process-video-batches", {
   title: "Process Video Batches",
   schedule: "*/5 * * * *", // Every 5 minutes
-  endpoint: autoProcessNextBatch,
+  endpoint: processNextBatchCronTarget,
 });
 
 /**
@@ -460,5 +480,5 @@ export const processBatchesCron = new CronJob("process-video-batches", {
 export const autoQueueNewMeetingsCron = new CronJob("auto-queue-meetings", {
   title: "Auto-Queue New Meeting Videos",
   schedule: "0 3 * * *", // Daily at 3:00 AM
-  endpoint: autoQueueNewMeetings,
+  endpoint: autoQueueNewMeetingsCronTarget,
 });

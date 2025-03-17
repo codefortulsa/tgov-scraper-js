@@ -4,7 +4,8 @@
  * This module provides functionality to download and link agenda documents
  * to specific meeting records from the TGov service.
  */
-import { documents, tgov, media } from "~encore/clients";
+import { documents, media, tgov } from "~encore/clients";
+
 import { api, APIError } from "encore.dev/api";
 import { CronJob } from "encore.dev/cron";
 import logger from "encore.dev/log";
@@ -136,7 +137,7 @@ export const processPendingAgendas = api(
 
 /**
  * Comprehensive automation endpoint that processes both documents and media for meetings
- * 
+ *
  * This endpoint can be used to:
  * 1. Find unprocessed meeting documents (agendas)
  * 2. Optionally queue corresponding videos for processing
@@ -160,61 +161,72 @@ export const autoProcessMeetingDocuments = api(
     queuedVideos?: number;
     videoBatchId?: string;
   }> => {
-    const { limit = 10, daysBack = 30, queueVideos = false, transcribeAudio = false } = params;
-    
-    logger.info(`Auto-processing meeting documents with options:`, { 
-      limit, 
-      daysBack, 
-      queueVideos, 
-      transcribeAudio 
+    const {
+      limit = 10,
+      daysBack = 30,
+      queueVideos = false,
+      transcribeAudio = false,
+    } = params;
+
+    logger.info(`Auto-processing meeting documents with options:`, {
+      limit,
+      daysBack,
+      queueVideos,
+      transcribeAudio,
     });
 
     try {
       // Step 1: Get meetings from the TGov service that need processing
       const { meetings } = await tgov.listMeetings({ limit: 100 });
-      
+
       // Filter for meetings with missing agendas but have agenda URLs
       const meetingsNeedingAgendas = meetings
-        .filter(m => !m.agendaId && m.agendaViewUrl)
+        .filter((m) => !m.agendaId && m.agendaViewUrl)
         .slice(0, limit);
-      
-      logger.info(`Found ${meetingsNeedingAgendas.length} meetings needing agendas`);
-      
+
+      logger.info(
+        `Found ${meetingsNeedingAgendas.length} meetings needing agendas`,
+      );
+
       // Step 2: Process agendas first
       let agendaResults = { processed: 0, successful: 0, failed: 0 };
-      
+
       if (meetingsNeedingAgendas.length > 0) {
         // Download and associate agenda documents
         agendaResults = await processPendingAgendas({
           limit: meetingsNeedingAgendas.length,
         });
-        
-        logger.info(`Processed ${agendaResults.processed} agendas, ${agendaResults.successful} successful`);
+
+        logger.info(
+          `Processed ${agendaResults.processed} agendas, ${agendaResults.successful} successful`,
+        );
       }
-      
+
       // Step 3: If requested, also queue videos for processing
       let queuedVideos = 0;
       let videoBatchId: string | undefined;
-      
+
       if (queueVideos) {
         // Find meetings with video URLs but no processed videos
         const meetingsNeedingVideos = meetings
-          .filter(m => !m.videoId && m.videoViewUrl)
+          .filter((m) => !m.videoId && m.videoViewUrl)
           .slice(0, limit);
-          
+
         if (meetingsNeedingVideos.length > 0) {
-          logger.info(`Found ${meetingsNeedingVideos.length} meetings needing video processing`);
-          
+          logger.info(
+            `Found ${meetingsNeedingVideos.length} meetings needing video processing`,
+          );
+
           // Queue video batch processing
           const videoResult = await media.autoQueueNewMeetings({
             limit: meetingsNeedingVideos.length,
             autoTranscribe: transcribeAudio,
           });
-          
+
           queuedVideos = videoResult.queuedMeetings;
           videoBatchId = videoResult.batchId;
-          
-          logger.info(`Queued ${queuedVideos} videos for processing`, { 
+
+          logger.info(`Queued ${queuedVideos} videos for processing`, {
             batchId: videoBatchId,
             transcriptionJobs: videoResult.transcriptionJobs,
           });
@@ -222,7 +234,7 @@ export const autoProcessMeetingDocuments = api(
           logger.info("No meetings need video processing");
         }
       }
-      
+
       return {
         processedAgendas: agendaResults.processed,
         successfulAgendas: agendaResults.successful,
@@ -234,10 +246,30 @@ export const autoProcessMeetingDocuments = api(
       logger.error("Failed to auto-process meeting documents", {
         error: error instanceof Error ? error.message : String(error),
       });
-      
+
       throw APIError.internal("Failed to auto-process meeting documents");
     }
-  }
+  },
+);
+
+/**
+ * Auto process meeting documents without parameters - wrapper for cron job
+ * // TODO: TEST THIS
+ */
+export const autoProcessMeetingDocumentsCronTarget = api(
+  {
+    method: "POST",
+    path: "/documents/auto-process/cron",
+    expose: false,
+  },
+  async () => {
+    // Call with default parameters
+    return autoProcessMeetingDocuments({
+      daysBack: 30,
+      queueVideos: true,
+      limit: 10,
+    });
+  },
 );
 
 /**
@@ -247,5 +279,5 @@ export const autoProcessMeetingDocuments = api(
 export const autoProcessDocumentsCron = new CronJob("auto-process-documents", {
   title: "Auto-Process Meeting Documents",
   schedule: "30 2 * * *", // Daily at 2:30 AM
-  endpoint: autoProcessMeetingDocuments,
+  endpoint: autoProcessMeetingDocumentsCronTarget,
 });

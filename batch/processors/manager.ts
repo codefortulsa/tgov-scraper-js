@@ -120,6 +120,26 @@ export const processAllTaskTypes = api(
 );
 
 /**
+ * Process all task types without parameters - wrapper for cron job
+ * // TODO: TEST THIS
+ */
+export const processAllTaskTypesCronTarget = api(
+  {
+    method: "POST",
+    path: "/batch/tasks/process-all/cron",
+    expose: false,
+  },
+  async () => {
+    // Call with default parameters
+    return processAllTaskTypes({
+      mediaLimit: 5,
+      documentLimit: 5,
+      transcriptionLimit: 5,
+    });
+  },
+);
+
+/**
  * Get status of all active batches across processor types
  */
 export const getAllBatchStatus = api(
@@ -486,5 +506,5 @@ export const cancelBatch = api(
 export const processAllTasksCron = new CronJob("process-all-tasks", {
   title: "Process tasks across all processors",
   schedule: "*/2 * * * *", // Every 2 minutes
-  endpoint: processAllTaskTypes,
+  endpoint: processAllTaskTypesCronTarget,
 });

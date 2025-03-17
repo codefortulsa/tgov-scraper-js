@@ -513,6 +513,25 @@ export const retryFailedWebhooks = api(
 );
 
 /**
+ * Retry failed webhooks without parameters - wrapper for cron job
+ * // TODO: TEST THIS
+ */
+export const retryFailedWebhooksCronTarget = api(
+  {
+    method: "POST",
+    path: "/webhooks/retry/cron",
+    expose: false,
+  },
+  async () => {
+    // Call with default parameters
+    return retryFailedWebhooks({
+      limit: 10,
+      maxAttempts: 3,
+    });
+  },
+);
+
+/**
  * Subscription to batch created events for webhook delivery
  */
 const _ = new Subscription(batchCreated, "webhook-batch-created", {
@@ -608,5 +627,5 @@ const ___ = new Subscription(
 export const retryWebhooksCron = new CronJob("retry-failed-webhooks", {
   title: "Retry Failed Webhook Deliveries",
   schedule: "*/5 * * * *", // Every 5 minutes
-  endpoint: retryFailedWebhooks,
+  endpoint: retryFailedWebhooksCronTarget,
 });
