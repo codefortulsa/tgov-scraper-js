@@ -123,6 +123,7 @@ export const getBatchStatus = api(
       tasks: batch.tasks.map((task) => ({
         id: task.id,
         viewerUrl: task.viewerUrl,
+        meetingRecordId: task.meetingRecordId,
         downloadUrl: task.downloadUrl,
         status: task.status,
         videoId: task.videoId,
@@ -314,7 +315,7 @@ export const processNextBatch = api(
 
 /**
  * Auto-queue unprocessed meeting videos for processing
- * 
+ *
  * This endpoint fetches recent meetings with video URLs that haven't been processed yet,
  * queues them for video processing, and optionally initiates transcription jobs.
  */
@@ -337,76 +338,83 @@ export const autoQueueNewMeetings = api(
     queuedMeetings: number;
     transcriptionJobs: number;
   }> => {
-    logger.info(`Searching for unprocessed meetings from past ${daysBack} days`);
-    
+    logger.info(
+      `Searching for unprocessed meetings from past ${daysBack} days`,
+    );
+
     // Get recent meetings from TGov service
     const { meetings } = await tgov.listMeetings({
       limit: 100, // Get a larger batch to filter from
     });
-    
+
     // Filter for meetings with video URLs but no videoId (unprocessed)
     const unprocessedMeetings = meetings.filter(
-      (meeting) => meeting.videoViewUrl && !meeting.videoId
+      (meeting) => meeting.videoViewUrl && !meeting.videoId,
     );
-    
+
     if (unprocessedMeetings.length === 0) {
       logger.info("No unprocessed meetings found");
       return { queuedMeetings: 0, transcriptionJobs: 0 };
     }
-    
+
     // Limit the number of meetings to process
     const meetingsToProcess = unprocessedMeetings.slice(0, limit);
-    
-    logger.info(`Queueing ${meetingsToProcess.length} unprocessed meetings for video processing`);
-    
+
+    logger.info(
+      `Queueing ${meetingsToProcess.length} unprocessed meetings for video processing`,
+    );
+
     try {
       // Queue the videos for processing
       const response = await queueVideoBatch({
-        viewerUrls: meetingsToProcess.map(m => m.videoViewUrl!),
-        meetingRecordIds: meetingsToProcess.map(m => m.id),
+        viewerUrls: meetingsToProcess.map((m) => m.videoViewUrl!),
+        meetingRecordIds: meetingsToProcess.map((m) => m.id),
         extractAudio: true,
       });
-      
-      logger.info(`Successfully queued batch ${response.batchId} with ${response.totalVideos} videos`);
-      
+
+      logger.info(
+        `Successfully queued batch ${response.batchId} with ${response.totalVideos} videos`,
+      );
+
       // Immediately process this batch
       await processNextBatch({ batchSize: meetingsToProcess.length });
-      
+
       // If autoTranscribe is enabled, wait for video processing and then queue transcriptions
       let transcriptionJobsCreated = 0;
-      
+
       if (autoTranscribe) {
         // Give some time for video processing to complete
         // In a production system, you might want a more sophisticated approach with callbacks
         logger.info("Scheduling transcription jobs for processed videos");
-        
+
         // Get the batch status after processing
         const batchStatus = await getBatchStatus({ batchId: response.batchId });
-        
+
         // Queue transcription for successfully processed videos
-        const completedTasks = batchStatus.tasks.filter(task => 
-          task.status === "completed" && task.audioId
+        const completedTasks = batchStatus.tasks.filter(
+          (task) => task.status === "completed" && task.audioId,
         );
-        
+
         for (const task of completedTasks) {
           try {
             if (task.audioId) {
               await transcription.transcribe({
                 audioFileId: task.audioId,
-                meetingRecordId: task.meetingRecordId,
+                meetingRecordId: task.meetingRecordId ?? undefined,
               });
               transcriptionJobsCreated++;
             }
           } catch (error) {
-            logger.error(`Failed to create transcription job for task ${task.id}`, {
-              error: error instanceof Error ? error.message : String(error),
-            });
+            logger.error(
+              `Failed to create transcription job for task ${task.id}`,
+              { error: error instanceof Error ? error.message : String(error) },
+            );
           }
         }
-        
+
         logger.info(`Created ${transcriptionJobsCreated} transcription jobs`);
       }
-      
+
       return {
         batchId: response.batchId,
         queuedMeetings: meetingsToProcess.length,

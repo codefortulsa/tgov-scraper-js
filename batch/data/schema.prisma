@@ -1,0 +1,107 @@
+// This is your Prisma schema file for the batch service,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+    provider        = "prisma-client-js"
+    previewFeatures = ["driverAdapters", "metrics"]
+    binaryTargets   = ["native", "debian-openssl-3.0.x"]
+    output          = "../../node_modules/@prisma/client/batch"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("BATCH_DATABASE_URL")
+}
+
+// Represents a batch of processing tasks
+model ProcessingBatch {
+    id              String           @id @default(cuid())
+    name            String?
+    batchType       String // "media", "document", "transcription"
+    status          String // "queued", "processing", "completed", "failed", "completed_with_errors"
+    totalTasks      Int              @default(0)
+    completedTasks  Int              @default(0)
+    failedTasks     Int              @default(0)
+    queuedTasks     Int              @default(0)
+    processingTasks Int              @default(0)
+    priority        Int              @default(0)
+    metadata        Json? // Additional batch metadata
+    createdAt       DateTime         @default(now())
+    updatedAt       DateTime         @updatedAt
+    tasks           ProcessingTask[]
+
+    @@index([status, priority, createdAt])
+}
+
+// Represents a single processing task within a batch
+model ProcessingTask {
+    id              String           @id @default(cuid())
+    batchId         String?
+    batch           ProcessingBatch? @relation(fields: [batchId], references: [id])
+    taskType        String // "video_download", "audio_extract", "document_download", "transcription", etc.
+    status          String // "queued", "processing", "completed", "failed"
+    retryCount      Int              @default(0)
+    maxRetries      Int              @default(3)
+    priority        Int              @default(0)
+    input           Json // Input data for the task (URLs, IDs, parameters)
+    output          Json? // Output data from the task (IDs of created resources, etc.)
+    error           String? // Error message if the task failed
+    meetingRecordId String? // Optional reference to a meeting record
+    startedAt       DateTime? // When processing started
+    completedAt     DateTime? // When processing completed
+    createdAt       DateTime         @default(now())
+    updatedAt       DateTime         @updatedAt
+
+    // Task dependencies - tasks that must complete before this one can start
+    dependsOn    TaskDependency[] @relation("DependentTask")
+    dependencies TaskDependency[] @relation("DependencyTask")
+
+    @@index([batchId, status])
+    @@index([status, priority, createdAt])
+    @@index([meetingRecordId])
+}
+
+// Represents a dependency between tasks
+model TaskDependency {
+    id               String         @id @default(cuid())
+    dependentTaskId  String // The task that depends on another
+    dependentTask    ProcessingTask @relation("DependentTask", fields: [dependentTaskId], references: [id])
+    dependencyTaskId String // The task that must complete first
+    dependencyTask   ProcessingTask @relation("DependencyTask", fields: [dependencyTaskId], references: [id])
+    createdAt        DateTime       @default(now())
+
+    @@unique([dependentTaskId, dependencyTaskId])
+}
+
+// Represents a webhook endpoint for batch event notifications
+model WebhookSubscription {
+    id         String   @id @default(cuid())
+    name       String
+    url        String
+    secret     String? // For signing the webhook requests
+    eventTypes String[] // Which events to send ("batch-created", "task-completed", "batch-status-changed")
+    active     Boolean  @default(true)
+    createdAt  DateTime @default(now())
+    updatedAt  DateTime @updatedAt
+
+    @@index([active])
+}
+
+// Tracks the delivery of webhook notifications
+model WebhookDelivery {
+    id              String    @id @default(cuid())
+    webhookId       String
+    eventType       String
+    payload         Json
+    responseStatus  Int?
+    responseBody    String?
+    error           String?
+    attempts        Int       @default(0)
+    successful      Boolean   @default(false)
+    scheduledFor    DateTime  @default(now())
+    lastAttemptedAt DateTime?
+    createdAt       DateTime  @default(now())
+
+    @@index([webhookId, successful])
+    @@index([successful, scheduledFor])
+}
