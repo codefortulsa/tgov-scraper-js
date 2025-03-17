@@ -1,17 +1,17 @@
 /**
  * Batch Processing Manager
- * 
+ *
  * Provides a unified interface for managing and coordinating different types of task processors.
  * Handles task scheduling, coordination between dependent tasks, and processor lifecycle.
  */
+import { db } from "../data";
+import { batchStatusChanged } from "../topics";
+import { processNextDocumentTasks } from "./documents";
+import { processNextMediaTasks } from "./media";
+
 import { api, APIError } from "encore.dev/api";
 import { CronJob } from "encore.dev/cron";
 import log from "encore.dev/log";
-
-import { db } from "../data";
-import { batchStatusChanged } from "../topics";
-import { processNextMediaTasks } from "./media";
-import { processNextDocumentTasks } from "./documents";
 
 /**
  * Types of batch processors supported by the system
@@ -67,7 +67,7 @@ export const processAllTaskTypes = api(
      * Processor types to run (defaults to all)
      */
     types?: ProcessorType[];
-    
+
     /**
      * Maximum tasks per processor
      */
@@ -75,27 +75,33 @@ export const processAllTaskTypes = api(
   }): Promise<{
     results: Record<string, { processed: number }>;
   }> => {
-    const { types = Object.keys(processors) as ProcessorType[], tasksPerProcessor = 5 } = params;
-    
+    const {
+      types = Object.keys(processors) as ProcessorType[],
+      tasksPerProcessor = 5,
+    } = params;
+
     log.info(`Processing tasks for processor types: ${types.join(", ")}`);
-    
+
     const results: Record<string, { processed: number }> = {};
-    
+
     // Process each registered processor
     for (const type of types) {
       if (!processors[type]) {
         log.warn(`Unknown processor type: ${type}`);
         continue;
       }
-      
+
       const processor = processors[type];
-      const limit = Math.min(tasksPerProcessor, processor.maxConcurrentTasks || 5);
-      
+      const limit = Math.min(
+        tasksPerProcessor,
+        processor.maxConcurrentTasks || 5,
+      );
+
       try {
         log.info(`Processing ${limit} tasks of type ${type}`);
         const result = await processor.processFunction(limit);
         results[type] = result;
-        
+
         if (result.processed > 0) {
           log.info(`Processed ${result.processed} tasks of type ${type}`);
         }
@@ -104,13 +110,13 @@ export const processAllTaskTypes = api(
           error: error instanceof Error ? error.message : String(error),
           processorType: type,
         });
-        
+
         results[type] = { processed: 0 };
       }
     }
-    
+
     return { results };
-  }
+  },
 );
 
 /**
@@ -127,30 +133,33 @@ export const getAllBatchStatus = api(
      * Limit of batches to return per type
      */
     limit?: number;
-    
+
     /**
      * Filter by status
      */
     status?: string;
   }): Promise<{
-    activeBatches: Record<string, Array<{
-      id: string;
-      name?: string;
-      batchType: string;
-      status: string;
-      taskSummary: {
-        total: number;
-        completed: number;
-        failed: number;
-        queued: number;
-        processing: number;
-      };
-      createdAt: Date;
-      updatedAt: Date;
-    }>>;
+    activeBatches: Record<
+      string,
+      Array<{
+        id: string;
+        name?: string;
+        batchType: string;
+        status: string;
+        taskSummary: {
+          total: number;
+          completed: number;
+          failed: number;
+          queued: number;
+          processing: number;
+        };
+        createdAt: Date;
+        updatedAt: Date;
+      }>
+    >;
   }> => {
     const { limit = 10, status } = params;
-    
+
     // Build filter condition
     const where: any = {};
     if (status) {
@@ -159,25 +168,22 @@ export const getAllBatchStatus = api(
       // Default to showing incomplete batches
       where.status = { notIn: ["completed", "failed"] };
     }
-    
+
     // Get all active batches
     const batches = await db.processingBatch.findMany({
       where,
-      orderBy: [
-        { priority: "desc" },
-        { createdAt: "desc" },
-      ],
+      orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
       take: limit * 3, // Fetch more and will group by type with limit per type
     });
-    
+
     // Group batches by type
     const batchesByType: Record<string, any[]> = {};
-    
+
     for (const batch of batches) {
       if (!batchesByType[batch.batchType]) {
         batchesByType[batch.batchType] = [];
       }
-      
+
       if (batchesByType[batch.batchType].length < limit) {
         batchesByType[batch.batchType].push({
           id: batch.id,
@@ -196,9 +202,9 @@ export const getAllBatchStatus = api(
         });
       }
     }
-    
+
     return { activeBatches: batchesByType };
-  }
+  },
 );
 
 /**
@@ -218,31 +224,31 @@ export const updateBatchStatus = api(
     previousStatus?: string;
   }> => {
     const { batchId, status } = params;
-    
+
     try {
       // Get the current batch first
       const batch = await db.processingBatch.findUnique({
         where: { id: batchId },
       });
-      
+
       if (!batch) {
         throw APIError.notFound(`Batch with ID ${batchId} not found`);
       }
-      
+
       // Only update if the status is different
       if (batch.status === status) {
-        return { 
-          success: true, 
-          previousStatus: batch.status 
+        return {
+          success: true,
+          previousStatus: batch.status,
         };
       }
-      
+
       // Update the batch status
       const updatedBatch = await db.processingBatch.update({
         where: { id: batchId },
         data: { status },
       });
-      
+
       // Publish status changed event
       await batchStatusChanged.publish({
         batchId,
@@ -257,27 +263,29 @@ export const updateBatchStatus = api(
         timestamp: new Date(),
         sourceService: "batch",
       });
-      
-      log.info(`Updated batch ${batchId} status from ${batch.status} to ${status}`);
-      
-      return { 
-        success: true, 
-        previousStatus: batch.status 
+
+      log.info(
+        `Updated batch ${batchId} status from ${batch.status} to ${status}`,
+      );
+
+      return {
+        success: true,
+        previousStatus: batch.status,
       };
     } catch (error) {
       if (error instanceof APIError) {
         throw error;
       }
-      
+
       log.error(`Failed to update batch ${batchId} status`, {
         batchId,
         status,
         error: error instanceof Error ? error.message : String(error),
       });
-      
+
       throw APIError.internal("Failed to update batch status");
     }
-  }
+  },
 );
 
 /**
@@ -296,17 +304,17 @@ export const retryFailedTasks = api(
     retriedCount: number;
   }> => {
     const { batchId, limit = 10 } = params;
-    
+
     try {
       // Find the batch first
       const batch = await db.processingBatch.findUnique({
         where: { id: batchId },
       });
-      
+
       if (!batch) {
         throw APIError.notFound(`Batch with ID ${batchId} not found`);
       }
-      
+
       // Find failed tasks that haven't exceeded max retries
       const failedTasks = await db.processingTask.findMany({
         where: {
@@ -316,11 +324,11 @@ export const retryFailedTasks = api(
         },
         take: limit,
       });
-      
+
       if (failedTasks.length === 0) {
         return { retriedCount: 0 };
       }
-      
+
       // Reset tasks to queued status
       let retriedCount = 0;
       for (const task of failedTasks) {
@@ -334,35 +342,39 @@ export const retryFailedTasks = api(
         });
         retriedCount++;
       }
-      
+
       // Update batch counts
       await db.processingBatch.update({
         where: { id: batchId },
         data: {
           queuedTasks: { increment: retriedCount },
           failedTasks: { decrement: retriedCount },
-          status: batch.status === "failed" || batch.status === "completed_with_errors" 
-            ? "processing" 
+          status:
+            (
+              batch.status === "failed" ||
+              batch.status === "completed_with_errors"
+            ) ?
+              "processing"
             : batch.status,
         },
       });
-      
+
       log.info(`Retried ${retriedCount} failed tasks in batch ${batchId}`);
-      
+
       return { retriedCount };
     } catch (error) {
       if (error instanceof APIError) {
         throw error;
       }
-      
+
       log.error(`Failed to retry tasks in batch ${batchId}`, {
         batchId,
         error: error instanceof Error ? error.message : String(error),
       });
-      
+
       throw APIError.internal("Failed to retry tasks");
     }
-  }
+  },
 );
 
 /**
@@ -381,22 +393,24 @@ export const cancelBatch = api(
     canceledTasks: number;
   }> => {
     const { batchId } = params;
-    
+
     try {
       // Find the batch first
       const batch = await db.processingBatch.findUnique({
         where: { id: batchId },
       });
-      
+
       if (!batch) {
         throw APIError.notFound(`Batch with ID ${batchId} not found`);
       }
-      
+
       // Only allow canceling batches that are not completed or failed
       if (batch.status === "completed" || batch.status === "failed") {
-        throw APIError.invalidArgument(`Cannot cancel batch with status ${batch.status}`);
+        throw APIError.invalidArgument(
+          `Cannot cancel batch with status ${batch.status}`,
+        );
       }
-      
+
       // Find tasks that can be canceled (queued or processing)
       const pendingTasks = await db.processingTask.findMany({
         where: {
@@ -404,7 +418,7 @@ export const cancelBatch = api(
           status: { in: ["queued", "processing"] },
         },
       });
-      
+
       // Cancel all pending tasks
       for (const task of pendingTasks) {
         await db.processingTask.update({
@@ -416,7 +430,7 @@ export const cancelBatch = api(
           },
         });
       }
-      
+
       // Update batch status
       await db.processingBatch.update({
         where: { id: batchId },
@@ -427,7 +441,7 @@ export const cancelBatch = api(
           failedTasks: batch.failedTasks + pendingTasks.length,
         },
       });
-      
+
       // Publish status changed event
       await batchStatusChanged.publish({
         batchId,
@@ -442,26 +456,28 @@ export const cancelBatch = api(
         timestamp: new Date(),
         sourceService: "batch",
       });
-      
-      log.info(`Canceled batch ${batchId} with ${pendingTasks.length} pending tasks`);
-      
-      return { 
-        success: true, 
-        canceledTasks: pendingTasks.length 
+
+      log.info(
+        `Canceled batch ${batchId} with ${pendingTasks.length} pending tasks`,
+      );
+
+      return {
+        success: true,
+        canceledTasks: pendingTasks.length,
       };
     } catch (error) {
       if (error instanceof APIError) {
         throw error;
       }
-      
+
       log.error(`Failed to cancel batch ${batchId}`, {
         batchId,
         error: error instanceof Error ? error.message : String(error),
       });
-      
+
       throw APIError.internal("Failed to cancel batch");
     }
-  }
+  },
 );
 
 /**
