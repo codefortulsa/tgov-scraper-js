@@ -32,7 +32,7 @@ export async function scrapeIndexPage(): Promise<TGovIndexMeetingRawJSON[]> {
 
   await page.goto(url.href, { waitUntil: "networkidle0" });
 
-  const data = await page.evaluate(async () => {
+  const data = await page.evaluate(async (VIEW_ID) => {
     const results = [];
 
     const yearsContent = Array.from(
@@ -119,7 +119,7 @@ export async function scrapeIndexPage(): Promise<TGovIndexMeetingRawJSON[]> {
     }
 
     return results;
-  });
+  }, VIEW_ID);
 
   logger.info("Successfully scraped TGov index", data);
 

@@ -1,8 +1,8 @@
-import { PrismaClient } from "./client";
+import { Prisma, PrismaClient } from "@prisma/client/tgov/index.js";
 
 import { SQLDatabase } from "encore.dev/storage/sqldb";
 
-export { Prisma } from "./client";
+export { Prisma };
 
 // Define the database connection
 const psql = new SQLDatabase("tgov", {

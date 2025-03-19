@@ -5,7 +5,6 @@ export type CommitteeDto = {
   name: string;
   createdAt: string;
   updatedAt: string;
-  meetingRecords?: MeetingRecordDto[];
 };
 
 export type MeetingRecordDto = {
@@ -22,13 +21,12 @@ export type MeetingRecordDto = {
   videoId: string | null;
   audioId: string | null;
   agendaId: string | null;
-  committee?: CommitteeDto;
 };
 
 type JsonValue =
   | string
   | number
   | boolean
-  | { [key in string]?: JsonValue }
+  | { [key in string]: JsonValue }
   | Array<JsonValue>
   | null;

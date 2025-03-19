@@ -12,13 +12,14 @@ type TgovScrapeResponse = { data: TGovIndexMeetingRawJSON[] };
  * This includes committee names, meeting names, dates, durations, agenda URLs, and video URLs.
  * The scraped data is then stored in the database for further processing.
  */
-export const scrape = api(
+export const scrapeTGovIndex = api(
   {
     auth: false,
     expose: true,
     method: "GET",
     path: "/scrape/tgov",
     tags: ["mvp", "scraper", "tgov"],
+    
   },
   async (): Promise<TgovScrapeResponse> => {
     try {

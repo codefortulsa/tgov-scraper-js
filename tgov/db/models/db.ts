@@ -22,13 +22,12 @@ export type MeetingRecordModel = {
   videoId: string | null;
   audioId: string | null;
   agendaId: string | null;
-  committee?: CommitteeModel;
 };
 
 type JsonValue =
   | string
   | number
   | boolean
-  | { [key in string]?: JsonValue }
+  | { [key in string]: JsonValue }
   | Array<JsonValue>
   | null;

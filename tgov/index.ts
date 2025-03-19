@@ -1,5 +1,6 @@
 import { normalizeDate, normalizeName } from "../scrapers/tgov/util";
 import { db, Prisma } from "./db";
+import { MeetingRecordDto } from "./db/models/dto";
 import { TGovIndexMeetingRawJSON } from "./db/models/json";
 
 import { scrapers } from "~encore/clients";
@@ -33,21 +34,7 @@ export const listMeetings = api(
     afterDate?: Date;
     cursor?: CursorPaginator;
     sort?: Sort | Sort[];
-  }): Promise<{
-    meetings: Array<{
-      id: string;
-      name: string;
-      startedAt: Date;
-      endedAt: Date;
-      committee: { id: string; name: string };
-      videoViewUrl: string | null;
-      agendaViewUrl: string | null;
-      videoId: string | null;
-      audioId: string | null;
-      agendaId: string | null;
-    }>;
-    total: number;
-  }> => {
+  }): Promise<{ meetings: MeetingRecordDto[]; total: number }> => {
     try {
       let where: Prisma.MeetingRecordWhereInput = {};
 
@@ -139,7 +126,7 @@ export const pull = api(
     path: "/tgov/pull",
   },
   async () => {
-    const data = await scrapers.scrapeTgovIndexPage();
+    const { data } = await scrapers.scrapeTGovIndex();
     const groups = Map.groupBy(data, (d) => normalizeName(d.committee));
 
     for (const committeeName of groups.keys()) {

@@ -5,25 +5,25 @@ generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["driverAdapters", "metrics"]
   binaryTargets   = ["native", "debian-openssl-3.0.x"]
-  output          = "./client"
+  output          = "../../node_modules/@prisma/client/tgov"
 }
 
 generator json {
-    provider     = "prisma-json-types-generator"
-    engineType   = "library"
-    clientOutput = "./client"
+  provider     = "prisma-json-types-generator"
+  engineType   = "library"
+  clientOutput = "../../node_modules/@prisma/client/tgov"
 }
 
 generator docs {
-    provider = "node node_modules/prisma-docs-generator"
-    output   = "./docs"
+  provider = "node node_modules/prisma-docs-generator"
+  output   = "./docs"
 }
 
 generator markdown {
-    provider = "prisma-markdown"
-    output   = "./docs/README.md"
-    title    = "Models"
-    namespace = "`batch` service"
+  provider  = "prisma-markdown"
+  output    = "./docs/README.md"
+  title     = "Models"
+  namespace = "`batch` service"
 }
 
 generator typescriptInterfaces {
@@ -48,6 +48,7 @@ generator typescriptInterfacesJson {
   bigIntType    = "string"
   decimalType   = "string"
   bytesType     = "ArrayObject"
+  omitRelations = true
   prettier      = true
 }
 
@@ -55,7 +56,6 @@ datasource db {
   provider = "postgresql"
   url      = env("TGOV_DATABASE_URL")
 }
-
 
 // Models related to TGov meeting data
 
