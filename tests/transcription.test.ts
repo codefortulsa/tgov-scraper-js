@@ -1,4 +1,4 @@
-import { db as transcriptionDb } from "../transcription/db";
+import { db as transcriptionDb } from "../services/transcription/db";
 
 import { transcription } from "~encore/clients";
 

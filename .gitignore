@@ -8,3 +8,5 @@ node_modules
 tmp/*
 .env.keys
 **/db/client
+
+**/src/generated

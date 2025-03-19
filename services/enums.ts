@@ -1,0 +1,41 @@
+export const JobStatus = {
+  QUEUED: "QUEUED",
+  PROCESSING: "PROCESSING",
+  COMPLETED: "COMPLETED",
+  COMPLETED_WITH_ERRORS: "COMPLETED_WITH_ERRORS",
+  FAILED: "FAILED",
+} as const;
+
+export type JobStatus = keyof typeof JobStatus;
+
+export const BatchType = {
+  MEDIA: "MEDIA",
+  DOCUMENT: "DOCUMENT",
+  TRANSCRIPTION: "TRANSCRIPTION",
+} as const;
+
+export type BatchType = keyof typeof BatchType;
+
+export const TaskType = {
+  DOCUMENT_DOWNLOAD: "DOCUMENT_DOWNLOAD",
+  DOCUMENT_CONVERT: "DOCUMENT_CONVERT",
+  DOCUMENT_EXTRACT: "DOCUMENT_EXTRACT",
+  DOCUMENT_PARSE: "DOCUMENT_PARSE",
+  AGENDA_DOWNLOAD: "AGENDA_DOWNLOAD",
+  VIDEO_DOWNLOAD: "VIDEO_DOWNLOAD",
+  VIDEO_PROCESS: "VIDEO_PROCESS",
+  AUDIO_EXTRACT: "AUDIO_EXTRACT",
+  AUDIO_TRANSCRIBE: "AUDIO_TRANSCRIBE",
+  SPEAKER_DIARIZE: "SPEAKER_DIARIZE",
+  TRANSCRIPT_FORMAT: "TRANSCRIPT_FORMAT",
+} as const;
+
+export type $TaskType = keyof typeof TaskType;
+
+export const EventType = {
+  BATCH_CREATED: "BATCH_CREATED",
+  TASK_COMPLETED: "TASK_COMPLETED",
+  BATCH_STATUS_CHANGED: "BATCH_STATUS_CHANGED",
+} as const;
+
+export type EventType = keyof typeof EventType;

@@ -3,9 +3,9 @@ import fs from "fs/promises";
 import os from "os";
 import path from "path";
 
-import { db as mediaDb } from "../media/db";
+import { db as mediaDb } from "../services/media/db";
+import { db as transcriptionDb } from "../services/transcription/db";
 import { db as tgovDb } from "../tgov/db";
-import { db as transcriptionDb } from "../transcription/db";
 // Optional: Import test config
 import * as testConfig from "./test.config";
 

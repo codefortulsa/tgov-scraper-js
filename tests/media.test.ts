@@ -3,7 +3,7 @@ import fs from "fs/promises";
 import os from "os";
 import path from "path";
 
-import { db as mediaDb } from "../media/db";
+import { db as mediaDb } from "../services/media/db";
 
 import { media } from "~encore/clients";
 

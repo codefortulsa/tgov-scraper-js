@@ -1,0 +1,114 @@
+// This is your Prisma schema file for this service,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters", "metrics"]
+  binaryTargets   = ["native", "debian-openssl-3.0.x"]
+  output          = "../../node_modules/@prisma/client/media"
+}
+
+generator json {
+  provider     = "prisma-json-types-generator"
+  engineType   = "library"
+  clientOutput = "../../node_modules/@prisma/client/media"
+}
+
+generator docs {
+  provider = "node node_modules/prisma-docs-generator"
+  output   = "./docs"
+}
+
+generator markdown {
+  provider = "prisma-markdown"
+  output   = "./docs/README.md"
+  title    = "Media Service Database Schema"
+}
+
+generator typescriptInterfaces {
+  provider      = "prisma-generator-typescript-interfaces"
+  modelType     = "type"
+  enumType      = "object"
+  headerComment = "DO NOT EDIT — Auto-generated file; see https://github.com/mogzol/prisma-generator-typescript-interfaces"
+  modelSuffix   = "Model"
+  output        = "./models/db.ts"
+  prettier      = true
+}
+
+generator typescriptInterfacesJson {
+  provider      = "prisma-generator-typescript-interfaces"
+  modelType     = "type"
+  enumType      = "stringUnion"
+  enumPrefix    = "$"
+  headerComment = "DO NOT EDIT — Auto-generated file; see https://github.com/mogzol/prisma-generator-typescript-interfaces"
+  output        = "./models/dto.ts"
+  modelSuffix   = "Dto"
+  dateType      = "string"
+  bigIntType    = "string"
+  decimalType   = "string"
+  bytesType     = "ArrayObject"
+  omitRelations = true
+  prettier      = true
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("MEDIA_DATABASE_URL")
+}
+
+/// Models related to media files and processing tasks
+
+model MediaFile {
+  id        String   @id @default(ulid())
+  bucket    String
+  key       String
+  mimetype  String
+  url       String?
+  srcUrl    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // External references maintained by ID only
+  meetingRecordId String?
+
+  // MediaFile metadata
+  title       String?
+  description String?
+  fileSize    Int?
+
+  // Tasks related to this media file
+  videoProcessingTaskVideos VideoProcessingTask[] @relation("task_video")
+  videoProcessingTaskAudios VideoProcessingTask[] @relation("task_audio")
+}
+
+model VideoProcessingBatch {
+  id             String   @id @default(ulid())
+  status         String // queued, processing, completed, failed
+  totalTasks     Int
+  completedTasks Int      @default(0)
+  failedTasks    Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tasks VideoProcessingTask[]
+}
+
+model VideoProcessingTask {
+  id           String   @id @default(ulid())
+  viewerUrl    String?
+  downloadUrl  String?
+  status       String // queued, processing, completed, failed
+  extractAudio Boolean  @default(true)
+  error        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  batchId         String?
+  meetingRecordId String? // Reference to TGov service's MeetingRecord
+  videoId         String?
+  audioId         String?
+
+  batch VideoProcessingBatch? @relation(fields: [batchId], references: [id])
+  video MediaFile?            @relation("task_video", fields: [videoId], references: [id])
+  audio MediaFile?            @relation("task_audio", fields: [audioId], references: [id])
+}
