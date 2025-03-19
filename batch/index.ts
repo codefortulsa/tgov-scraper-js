@@ -7,15 +7,16 @@
  * - Task dependency management
  * - Automatic retries and failure handling
  */
-import { db } from "./data";
-import { taskCompleted } from "./topics";
-
+import { db } from "./db";
 import {
-  BatchStatus,
+  $TaskType,
   BatchType,
-  TaskStatus,
-  TaskType,
-} from "@prisma/client/batch/index.js";
+  JobStatus,
+  ProcessingTaskModel,
+} from "./db/models/db";
+import { ProcessingBatchDto, ProcessingTaskDto } from "./db/models/dto";
+import { BatchMetadata, TaskInputJSON, TaskOutputJSON } from "./db/models/json";
+import { taskCompleted } from "./topics";
 
 import { api, APIError } from "encore.dev/api";
 import log from "encore.dev/log";
@@ -35,37 +36,9 @@ export const createTask = api(
     path: "/batch/task",
     expose: true,
   },
-  async (params: {
-    /**
-     * Batch ID to associate the task with
-     */
-    batchId?: string;
-
-    /**
-     * Type of task to create
-     */
-    taskType: TaskType;
-
-    /**
-     * Task input data (specific to task type)
-     */
-    input: PrismaJson.TaskInputJSON;
-
-    /**
-     * Optional task priority (higher numbers = higher priority)
-     */
-    priority?: number;
-
-    /**
-     * Optional meeting record ID for association
-     */
-    meetingRecordId?: string;
-
-    /**
-     * Optional dependencies (task IDs that must complete first)
-     */
-    dependsOn?: string[];
-  }): Promise<{
+  async (
+    params: Omit<ProcessingTaskDto, "id" | "createdAt" | "updatedAt">,
+  ): Promise<{
     taskId: string;
   }> => {
     const {
@@ -76,6 +49,10 @@ export const createTask = api(
       meetingRecordId,
       dependsOn = [],
     } = params;
+
+    if (input == null) {
+      throw APIError.invalidArgument("Task input cannot be nullish");
+    }
 
     try {
       // If batchId is provided, verify it exists
@@ -92,23 +69,22 @@ export const createTask = api(
       // Create the task
       const task = await db.processingTask.create({
         data: {
+          input,
           batchId,
           taskType,
-          status: TaskStatus.QUEUED,
-          priority,
-          input,
+          status: JobStatus.QUEUED,
           meetingRecordId,
+          priority,
           // Create dependencies if provided
-          dependsOn:
-            dependsOn.length > 0 ?
-              {
-                createMany: {
-                  data: dependsOn.map((depId) => ({
-                    dependencyTaskId: depId,
-                  })),
-                },
-              }
-            : undefined,
+          ...(dependsOn.length > 0 && {
+            dependsOn: {
+              createMany: {
+                data: dependsOn.map((dep) => ({
+                  dependencyTaskId: dep.dependencyTaskId,
+                })),
+              },
+            },
+          }),
         },
       });
 
@@ -156,29 +132,12 @@ export const createBatch = api(
     path: "/batch",
     expose: true,
   },
-  async (params: {
-    /**
-     * Type of batch (media, document, transcription, etc.)
-     */
-    batchType: BatchType;
-
-    /**
-     * Optional name for the batch
-     */
-    name?: string;
-
-    /**
-     * Optional priority (higher numbers = higher priority)
-     */
-    priority?: number;
-
-    /**
-     * Optional metadata for the batch
-     */
-    metadata?: PrismaJson.BatchMetadataJSON;
-  }): Promise<{
-    batchId: string;
-  }> => {
+  async (
+    params: Pick<
+      ProcessingBatchDto,
+      "batchType" | "name" | "priority" | "metadata"
+    >,
+  ): Promise<{ batchId: string }> => {
     const { batchType, name, priority = 0, metadata } = params;
 
     try {
@@ -186,9 +145,9 @@ export const createBatch = api(
         data: {
           batchType,
           name,
-          status: BatchStatus.QUEUED,
+          status: JobStatus.QUEUED,
           priority,
-          metadata,
+          metadata: metadata ?? {},
           totalTasks: 0,
           queuedTasks: 0,
           processingTasks: 0,
@@ -227,7 +186,7 @@ export const getBatchStatus = api(
   async (params: {
     batchId: string;
     includeTasks?: boolean;
-    taskStatus?: TaskStatus | TaskStatus[];
+    taskStatus?: JobStatus | JobStatus[];
     taskLimit?: number;
   }): Promise<{
     batch: {
@@ -236,7 +195,7 @@ export const getBatchStatus = api(
       batchType: BatchType;
       status: string;
       priority: number;
-      metadata?: PrismaJson.BatchMetadataJSON;
+      metadata?: BatchMetadata;
       createdAt: Date;
       updatedAt: Date;
       totalTasks: number;
@@ -247,11 +206,11 @@ export const getBatchStatus = api(
     };
     tasks?: Array<{
       id: string;
-      taskType: TaskType;
+      taskType: $TaskType;
       status: string;
       priority: number;
-      input: PrismaJson.TaskInputJSON;
-      output?: PrismaJson.TaskOutputJSON;
+      input: TaskInputJSON;
+      output?: TaskOutputJSON;
       error?: string;
       createdAt: Date;
       updatedAt: Date;
@@ -302,7 +261,7 @@ export const getBatchStatus = api(
           batchType: batch.batchType,
           status: batch.status,
           priority: batch.priority,
-          metadata: batch.metadata ?? undefined,
+          metadata: batch.metadata || {},
           createdAt: batch.createdAt,
           updatedAt: batch.updatedAt,
           totalTasks: batch.totalTasks,
@@ -346,8 +305,8 @@ export const getBatchStatus = api(
  */
 export async function updateTaskStatus(params: {
   taskId: string;
-  status: TaskStatus;
-  output?: PrismaJson.TaskOutputJSON;
+  status: JobStatus;
+  output?: TaskOutputJSON;
   error?: string;
 }): Promise<void> {
   const { taskId, status, output, error } = params;
@@ -382,7 +341,7 @@ export async function updateTaskStatus(params: {
           output: output !== undefined ? output : undefined,
           error: error !== undefined ? error : undefined,
           completedAt:
-            status === TaskStatus.COMPLETED || TaskStatus.FAILED ?
+            status === JobStatus.COMPLETED || JobStatus.FAILED ?
               new Date()
             : undefined,
         },
@@ -393,20 +352,20 @@ export async function updateTaskStatus(params: {
         const updateData: any = {};
 
         // Decrement counter for old status
-        if (oldStatus === TaskStatus.QUEUED) {
+        if (oldStatus === JobStatus.QUEUED) {
           updateData.queuedTasks = { decrement: 1 };
-        } else if (oldStatus === TaskStatus.PROCESSING) {
+        } else if (oldStatus === JobStatus.PROCESSING) {
           updateData.processingTasks = { decrement: 1 };
         }
 
         // Increment counter for new status
-        if (status === TaskStatus.QUEUED) {
+        if (status === JobStatus.QUEUED) {
           updateData.queuedTasks = { increment: 1 };
-        } else if (status === TaskStatus.PROCESSING) {
+        } else if (status === JobStatus.PROCESSING) {
           updateData.processingTasks = { increment: 1 };
-        } else if (status === TaskStatus.COMPLETED) {
+        } else if (status === JobStatus.COMPLETED) {
           updateData.completedTasks = { increment: 1 };
-        } else if (TaskStatus.FAILED) {
+        } else if (JobStatus.FAILED) {
           updateData.failedTasks = { increment: 1 };
         }
 
@@ -436,14 +395,14 @@ export async function updateTaskStatus(params: {
             batch.completedTasks + batch.failedTasks === batch.totalTasks
           ) {
             // All tasks are either completed or failed
-            let batchStatus: BatchStatus;
+            let batchStatus: JobStatus;
 
             if (batch.failedTasks === 0) {
-              batchStatus = BatchStatus.COMPLETED; // All tasks completed successfully
+              batchStatus = JobStatus.COMPLETED; // All tasks completed successfully
             } else if (batch.completedTasks === 0) {
-              batchStatus = BatchStatus.FAILED; // All tasks failed
+              batchStatus = JobStatus.FAILED; // All tasks failed
             } else {
-              batchStatus = BatchStatus.COMPLETED_WITH_ERRORS; // Mixed results
+              batchStatus = JobStatus.COMPLETED_WITH_ERRORS; // Mixed results
             }
 
             // Only update if status has changed
@@ -458,16 +417,21 @@ export async function updateTaskStatus(params: {
       }
 
       // For completed or failed tasks, publish an event
-      if (status === TaskStatus.COMPLETED || TaskStatus.FAILED) {
+      if (status === JobStatus.COMPLETED || JobStatus.FAILED) {
         await taskCompleted.publish({
           taskId,
           taskType: task.taskType,
           batchId: task.batchId,
           status,
-          success: status === TaskStatus.COMPLETED,
-          output: output,
-          errorMessage: error,
-          resourceIds: getResourceIds(output),
+          success: status === JobStatus.COMPLETED,
+          // Only include error message for failed tasks
+          ...(status === JobStatus.FAILED && error ?
+            { errorMessage: error }
+          : {}),
+          // Extract only essential resource IDs from output
+          resourceIds: getEssentialResourceIds(output),
+          // Include meetingRecordId as it's commonly used for linking records
+          meetingRecordId: task.meetingRecordId ?? undefined,
           timestamp: new Date(),
           sourceService: "batch",
         });
@@ -496,9 +460,7 @@ export async function updateTaskStatus(params: {
 /**
  * Extract important resource IDs from task output for event notifications
  */
-function getResourceIds(
-  output?: PrismaJson.TaskOutputJSON,
-): Record<string, string> {
+function getResourceIds(output?: TaskOutputJSON): Record<string, string> {
   if (!output) return {};
 
   const resourceMap: Record<string, string> = {};
@@ -516,6 +478,37 @@ function getResourceIds(
   ] as const;
 
   for (const field of resourceFields) {
+    const key = field as keyof typeof output;
+    if (field in output && typeof output[key] === "string") {
+      resourceMap[key] = output[key];
+    }
+  }
+
+  return resourceMap;
+}
+
+/**
+ * Extract only essential resource IDs from task output for event notifications
+ * This is an optimized version that only extracts the most critical identifiers
+ * needed for dependent task processing
+ */
+function getEssentialResourceIds(
+  output?: TaskOutputJSON,
+): Record<string, string> {
+  if (!output) return {};
+  const resourceMap: Record<string, string> = {};
+
+  // Extract only the most critical resource IDs
+  // Subscribers can query the database for additional details if needed
+  const essentialFields = [
+    "transcriptionId",
+    "audioId",
+    "videoId",
+    "documentId",
+    "diarizationId",
+  ] as const;
+
+  for (const field of essentialFields) {
     const key = field as keyof typeof output;
     if (field in output && typeof output[key] === "string") {
       resourceMap[key] = output[key];

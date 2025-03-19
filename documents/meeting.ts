@@ -10,6 +10,8 @@ import { api, APIError } from "encore.dev/api";
 import { CronJob } from "encore.dev/cron";
 import logger from "encore.dev/log";
 
+import { subDays } from "date-fns";
+
 interface MeetingDocumentResponse {
   documentId?: string;
   documentUrl?: string;
@@ -101,9 +103,15 @@ export const processPendingAgendas = api(
     const { limit = 10, daysBack = 30 } = params;
 
     // Get meetings from the last X days that don't have agendas
-    const meetings = await tgov.listMeetings({});
-    const meetingsNeedingAgendas = meetings.meetings
-      .filter((m) => !m.agendaId && m.agendaViewUrl)
+    const { meetings } = await tgov.listMeetings({});
+    const startAfterDate = subDays(new Date(), daysBack);
+    const meetingsNeedingAgendas = meetings
+      .filter(
+        (m) =>
+          !m.agendaId &&
+          m.agendaViewUrl &&
+          m.startedAt.getTime() > startAfterDate.getTime(),
+      )
       .slice(0, limit);
 
     let successful = 0;
@@ -177,7 +185,10 @@ export const autoProcessMeetingDocuments = api(
 
     try {
       // Step 1: Get meetings from the TGov service that need processing
-      const { meetings } = await tgov.listMeetings({ limit: 100 });
+      const { meetings } = await tgov.listMeetings({
+        hasUnsavedAgenda: true,
+        cursor: { next: 100 },
+      });
 
       // Filter for meetings with missing agendas but have agenda URLs
       const meetingsNeedingAgendas = meetings

@@ -6,7 +6,7 @@
  */
 import crypto from "crypto";
 
-import { db } from "./data";
+import { db } from "./db";
 import {
   batchCreated,
   BatchCreatedEvent,

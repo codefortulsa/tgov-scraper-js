@@ -3,11 +3,11 @@ import os from "os";
 import path from "path";
 import { Readable } from "stream";
 
+import { JobStatus } from "../batch/db/models/db";
 import env from "../env";
-import { db } from "./data";
+import { db } from "./db";
 import { WhisperClient } from "./whisperClient";
 
-import { TaskStatus } from "@prisma/client/batch/index.js";
 import { media } from "~encore/clients";
 
 import { api, APIError } from "encore.dev/api";
@@ -85,7 +85,7 @@ export interface TranscriptionResult {
   /**
    * Current status of the transcription
    */
-  status: TaskStatus;
+  status: JobStatus;
 
   /**
    * Error message if the transcription failed
@@ -160,7 +160,7 @@ export interface TranscriptionResponse {
   /**
    * Current status of the job
    */
-  status: TaskStatus;
+  status: JobStatus;
 
   /**
    * ID of the resulting transcription (available when completed)
@@ -209,7 +209,7 @@ export const transcribe = api(
     try {
       const job = await db.transcriptionJob.create({
         data: {
-          status: TaskStatus.QUEUED,
+          status: JobStatus.QUEUED,
           priority: priority || 0,
           model: model || "whisper-1",
           language,
@@ -235,7 +235,7 @@ export const transcribe = api(
 
       return {
         jobId: job.id,
-        status: TaskStatus.QUEUED,
+        status: JobStatus.QUEUED,
       };
     } catch (error) {
       log.error("Failed to create transcription job", {
@@ -270,7 +270,7 @@ export const getJobStatus = api(
 
       return {
         jobId: job.id,
-        status: job.status as TaskStatus,
+        status: job.status as JobStatus,
         transcriptionId: job.transcriptionId || undefined,
         error: job.error || undefined,
       };
@@ -316,7 +316,7 @@ export const getTranscription = api(
         model: transcription.model,
         confidence: transcription.confidence || undefined,
         processingTime: transcription.processingTime || undefined,
-        status: transcription.status as TaskStatus,
+        status: transcription.status as JobStatus,
         error: transcription.error || undefined,
         createdAt: transcription.createdAt,
         updatedAt: transcription.updatedAt,
@@ -371,7 +371,7 @@ export const getMeetingTranscriptions = api(
           model: transcription.model,
           confidence: transcription.confidence || undefined,
           processingTime: transcription.processingTime || undefined,
-          status: transcription.status as TaskStatus,
+          status: transcription.status as JobStatus,
           error: transcription.error || undefined,
           createdAt: transcription.createdAt,
           updatedAt: transcription.updatedAt,
@@ -408,7 +408,7 @@ export const processQueuedJobs = api(
   async (): Promise<{ processed: number }> => {
     const queuedJobs = await db.transcriptionJob.findMany({
       where: {
-        status: TaskStatus.QUEUED,
+        status: JobStatus.QUEUED,
       },
       orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
       take: 10, // Process in batches to avoid overloading
@@ -523,7 +523,7 @@ async function processJob(jobId: string): Promise<void> {
         model: job.model,
         confidence: averageConfidence,
         processingTime,
-        status: TaskStatus.COMPLETED,
+        status: JobStatus.COMPLETED,
         audioFileId: job.audioFileId,
         meetingRecordId: job.meetingRecordId,
         segments: {
@@ -543,7 +543,7 @@ async function processJob(jobId: string): Promise<void> {
     await db.transcriptionJob.update({
       where: { id: jobId },
       data: {
-        status: TaskStatus.COMPLETED,
+        status: JobStatus.COMPLETED,
         transcriptionId: transcription.id,
       },
     });
@@ -564,7 +564,7 @@ async function processJob(jobId: string): Promise<void> {
     await db.transcriptionJob.update({
       where: { id: jobId },
       data: {
-        status: TaskStatus.FAILED,
+        status: JobStatus.FAILED,
         error: errorMessage,
       },
     });

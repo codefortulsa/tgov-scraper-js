@@ -4,7 +4,7 @@
  * Provides batch processing endpoints for video acquisition and processing,
  * designed for handling multiple videos concurrently or in the background.
  */
-import { db } from "./data";
+import { db } from "./db";
 import { processMedia } from "./processor";
 
 import { tgov, transcription } from "~encore/clients";
@@ -344,7 +344,7 @@ export const autoQueueNewMeetings = api(
 
     // Get recent meetings from TGov service
     const { meetings } = await tgov.listMeetings({
-      limit: 100, // Get a larger batch to filter from
+      limit: 100,
     });
 
     // Filter for meetings with video URLs but no videoId (unprocessed)

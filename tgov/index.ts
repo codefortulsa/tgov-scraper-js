@@ -1,114 +1,20 @@
-import { launchOptions } from "./browser";
-import { db } from "./data";
-import { scrapeIndex } from "./scrape";
+import { normalizeDate, normalizeName } from "../scrapers/tgov/util";
+import { db, Prisma } from "./db";
+import { TGovIndexMeetingRawJSON } from "./db/models/json";
+
+import { scrapers } from "~encore/clients";
 
 import { api, APIError } from "encore.dev/api";
-import { CronJob } from "encore.dev/cron";
-import log from "encore.dev/log";
+import logger from "encore.dev/log";
 
-import puppeteer from "puppeteer";
+type Sort =
+  | { name: "asc" | "desc" }
+  | { startedAt: "asc" | "desc" }
+  | { committee: { name: "asc" | "desc" } };
 
-/**
- * Scrape the Tulsa Government (TGov) index page for new meeting information.
- * This includes committee names, meeting names, dates, durations, agenda URLs, and video URLs.
- * The scraped data is then stored in the database for further processing.
- */
-export const scrape = api(
-  {
-    auth: false,
-    expose: true,
-    method: "GET",
-    path: "/scrape/tgov",
-    tags: ["mvp", "scraper", "tgov"],
-  },
-  async (): Promise<{ success: boolean }> => {
-    log.info("Starting TGov index scrape");
-
-    try {
-      await scrapeIndex();
-      log.info("Successfully scraped TGov index");
-      return { success: true };
-    } catch (error) {
-      log.error("Failed to scrape TGov index", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw APIError.internal("Failed to scrape TGov index");
-    }
-  },
-);
-
-/**
- * Scrapes the TGov index page daily at 12:01 AM.
- */
-export const dailyTgovScrape = new CronJob("daily-tgov-scrape", {
-  endpoint: scrape,
-  title: "TGov Daily Scrape",
-  schedule: "1 0 * * *",
-});
-
-/**
- * Extracts video URL from a TGov viewer page
- *
- * The TGov website doesn't provide direct video URLs. This endpoint accepts
- * a viewer page URL and returns the actual video URL that can be downloaded.
- */
-export const extractVideoUrl = api(
-  {
-    auth: false,
-    expose: true,
-    method: "POST",
-    path: "/tgov/extract-video-url",
-  },
-  async (params: { viewerUrl: string }): Promise<{ videoUrl: string }> => {
-    const { viewerUrl } = params;
-    log.info("Extracting video URL", { viewerUrl });
-
-    let browser;
-    try {
-      browser = await puppeteer.launch(launchOptions);
-      const page = await browser.newPage();
-      await page.goto(viewerUrl.toString(), { waitUntil: "domcontentloaded" });
-
-      const videoUrl = await page.evaluate(() => {
-        // May be defined in the global scope of the page
-        var video_url: string | null | undefined;
-
-        if (typeof video_url === "string") return video_url;
-
-        const videoElement = document.querySelector("video > source");
-        if (!videoElement) {
-          throw new Error("No element found with selector 'video > source'");
-        }
-
-        video_url = videoElement.getAttribute("src");
-        if (!video_url) {
-          throw new Error("No src attribute found on element");
-        }
-
-        return video_url;
-      });
-
-      log.info("Successfully extracted video URL", {
-        viewerUrl,
-        videoUrl,
-      });
-
-      await browser.close();
-      return { videoUrl };
-    } catch (error) {
-      log.error("Failed to extract video URL", {
-        viewerUrl,
-        error: error instanceof Error ? error.message : String(error),
-      });
-
-      if (browser) {
-        await browser.close();
-      }
-
-      throw APIError.internal("Failed to extract video URL from viewer page");
-    }
-  },
-);
+type CursorPaginator =
+  | { id?: string; next: number }
+  | { id?: string; prev: number };
 
 /**
  * Lists all meetings with optional filtering capabilities
@@ -121,9 +27,12 @@ export const listMeetings = api(
     path: "/tgov/meetings",
   },
   async (params: {
-    limit?: number;
-    offset?: number;
+    hasUnsavedAgenda?: boolean;
     committeeId?: string;
+    beforeDate?: Date;
+    afterDate?: Date;
+    cursor?: CursorPaginator;
+    sort?: Sort | Sort[];
   }): Promise<{
     meetings: Array<{
       id: string;
@@ -131,62 +40,55 @@ export const listMeetings = api(
       startedAt: Date;
       endedAt: Date;
       committee: { id: string; name: string };
-      videoViewUrl?: string;
-      agendaViewUrl?: string;
-      videoId?: string;
-      audioId?: string;
-      agendaId?: string;
+      videoViewUrl: string | null;
+      agendaViewUrl: string | null;
+      videoId: string | null;
+      audioId: string | null;
+      agendaId: string | null;
     }>;
     total: number;
   }> => {
-    const { limit = 20, offset = 0, committeeId } = params;
-
     try {
-      const where = committeeId ? { committeeId } : {};
+      let where: Prisma.MeetingRecordWhereInput = {};
+
+      if (params.committeeId) where.committeeId = params.committeeId;
+      if (params.afterDate) where.startedAt = { gte: params.afterDate };
+
+      if (params.hasUnsavedAgenda === false) {
+        where.OR = [{ agendaViewUrl: null }, { agendaId: { not: null } }];
+      }
+
+      if (params.hasUnsavedAgenda === true) {
+        where.AND = [{ agendaViewUrl: { not: null } }, { agendaId: null }];
+      }
 
       const [meetings, total] = await Promise.all([
-        db.meetingRecord.findMany({
-          where,
-          include: {
-            committee: true,
-          },
-          take: limit,
-          skip: offset,
-          orderBy: { startedAt: "desc" },
-        }),
+        db.meetingRecord
+          .findMany({
+            where,
+            include: { committee: true },
+            orderBy: params.sort,
+          })
+          .then((meetings) =>
+            meetings.map((meeting) => ({
+              ...meeting,
+            })),
+          ),
         db.meetingRecord.count({ where }),
       ]);
 
-      log.debug("Retrieved meetings", {
+      logger.debug("Retrieved meetings", {
         count: meetings.length,
         total,
-        committeeId: committeeId || "all",
+        committeeId: params.committeeId || "all",
       });
 
-      return {
-        meetings: meetings.map((meeting) => ({
-          id: meeting.id,
-          name: meeting.name,
-          startedAt: meeting.startedAt,
-          endedAt: meeting.endedAt,
-          committee: {
-            id: meeting.committee.id,
-            name: meeting.committee.name,
-          },
-          videoViewUrl: meeting.videoViewUrl || undefined,
-          agendaViewUrl: meeting.agendaViewUrl || undefined,
-          videoId: meeting.videoId || undefined,
-          audioId: meeting.audioId || undefined,
-          agendaId: meeting.agendaId || undefined,
-        })),
-        total,
-      };
+      return { meetings, total };
     } catch (error) {
-      log.error("Failed to list meetings", {
-        committeeId: committeeId || "all",
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw APIError.internal("Failed to list meetings");
+      const err = error instanceof Error ? error : new Error(String(error));
+      const msg = `Error while listing meetings: ${err.message}`;
+      logger.error(err, msg, params);
+      throw APIError.internal(msg, err);
     }
   },
 );
@@ -212,7 +114,7 @@ export const listCommittees = api(
         orderBy: { name: "asc" },
       });
 
-      log.debug("Retrieved committees", { count: committees.length });
+      logger.debug("Retrieved committees", { count: committees.length });
 
       return {
         committees: committees.map((committee) => ({
@@ -221,10 +123,59 @@ export const listCommittees = api(
         })),
       };
     } catch (error) {
-      log.error("Failed to list committees", {
+      logger.error("Failed to list committees", {
         error: error instanceof Error ? error.message : String(error),
       });
       throw APIError.internal("Failed to list committees");
+    }
+  },
+);
+
+export const pull = api(
+  {
+    method: "POST",
+    expose: true,
+    auth: false,
+    path: "/tgov/pull",
+  },
+  async () => {
+    const data = await scrapers.scrapeTgovIndexPage();
+    const groups = Map.groupBy(data, (d) => normalizeName(d.committee));
+
+    for (const committeeName of groups.keys()) {
+      // Create or update the committee record
+      const committee = await db.committee.upsert({
+        where: { name: committeeName },
+        update: {},
+        create: { name: committeeName },
+      });
+
+      //TODO There isn't much consistency or convention in how things are named
+      // Process each meeting for this committee
+      for (const rawJson of groups.get(committeeName) || []) {
+        const { startedAt, endedAt } = normalizeDate(rawJson);
+        const name = normalizeName(`${rawJson.name}__${rawJson.date}`);
+
+        // Create or update the meeting record
+        await db.meetingRecord.upsert({
+          where: {
+            committeeId_startedAt: {
+              committeeId: committee.id,
+              startedAt,
+            },
+          },
+          update: {},
+          create: {
+            name,
+            rawJson,
+            startedAt,
+            endedAt,
+            videoViewUrl: rawJson.videoViewUrl,
+            agendaViewUrl: rawJson.agendaViewUrl,
+            committee: { connect: committee },
+          },
+        });
+      }
     }
   },
 );
@@ -253,7 +204,7 @@ export const getMeeting = api(
       videoId?: string;
       audioId?: string;
       agendaId?: string;
-      rawJson: PrismaJson.TGovIndexMeetingRawJSON;
+      rawJson: TGovIndexMeetingRawJSON;
       createdAt: Date;
       updatedAt: Date;
     };
@@ -270,11 +221,11 @@ export const getMeeting = api(
       });
 
       if (!meeting) {
-        log.info("Meeting not found", { meetingId: id });
+        logger.info("Meeting not found", { meetingId: id });
         throw APIError.notFound(`Meeting with ID ${id} not found`);
       }
 
-      log.debug("Retrieved meeting details", {
+      logger.debug("Retrieved meeting details", {
         meetingId: id,
         committeeName: meeting.committee.name,
       });
@@ -304,7 +255,7 @@ export const getMeeting = api(
         throw error; // Rethrow API errors like NotFound
       }
 
-      log.error("Failed to get meeting", {
+      logger.error("Failed to get meeting", {
         meetingId: id,
         error: error instanceof Error ? error.message : String(error),
       });

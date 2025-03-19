@@ -6,16 +6,11 @@
  * - Document parsing
  * - Meeting association
  */
-import { db } from "../data";
+import { db } from "../db";
+import { $TaskType, BatchType, JobStatus, TaskType } from "../db/models/db";
 import { updateTaskStatus } from "../index";
 import { batchCreated, taskCompleted } from "../topics";
 
-import {
-  BatchStatus,
-  BatchType,
-  TaskStatus,
-  TaskType,
-} from "@prisma/client/batch/index.js";
 import { documents, tgov } from "~encore/clients";
 
 import { api } from "encore.dev/api";
@@ -49,53 +44,45 @@ export const processNextDocumentTasks = api(
 
     // Get next available tasks for document processing
     const nextTasks = await db.processingTask.findMany({
-      where: {
-        status: TaskStatus.QUEUED,
-        taskType: { in: DOCUMENT_TASK_TYPES },
-      },
-      orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
       take: limit,
-      // Include any task dependencies to check if they're satisfied
-      include: {
+      orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+      where: {
+        status: JobStatus.QUEUED,
+        taskType: { in: DOCUMENT_TASK_TYPES },
         dependsOn: {
-          include: {
-            dependencyTask: true,
+          every: {
+            dependencyTask: {
+              status: {
+                in: [JobStatus.COMPLETED, JobStatus.COMPLETED_WITH_ERRORS],
+              },
+            },
           },
         },
       },
     });
 
-    // Filter for tasks that have all dependencies satisfied
-    const availableTasks = nextTasks.filter((task) => {
-      if (task.dependsOn.length === 0) return true;
+    if (nextTasks.length === 0) return { processed: 0 };
 
-      // All dependencies must be completed
-      return task.dependsOn.every(
-        (dep) => dep.dependencyTask.status === TaskStatus.COMPLETED,
-      );
-    });
-
-    if (availableTasks.length === 0) {
-      return { processed: 0 };
-    }
-
-    log.info(`Processing ${availableTasks.length} document tasks`);
+    log.info(`Processing ${nextTasks.length} document tasks`);
 
     let processedCount = 0;
 
     // Process each task
-    for (const task of availableTasks) {
+    for (const task of nextTasks) {
       try {
         // Mark task as processing
         await updateTaskStatus({
           taskId: task.id,
-          status: TaskStatus.PROCESSING,
+          status: JobStatus.PROCESSING,
         });
 
         // Process based on task type
         switch (task.taskType) {
           case TaskType.AGENDA_DOWNLOAD:
-            await processAgendaDownload(task);
+            await processAgendaDownload({
+              meetingId: task.meetingRecordId,
+              agendaUrl: task.input.url,
+            });
             break;
 
           case TaskType.DOCUMENT_DOWNLOAD:
@@ -121,7 +108,7 @@ export const processNextDocumentTasks = api(
         // Mark task as failed
         await updateTaskStatus({
           taskId: task.id,
-          status: TaskStatus.FAILED,
+          status: JobStatus.FAILED,
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -134,44 +121,36 @@ export const processNextDocumentTasks = api(
 /**
  * Process an agenda download task
  */
-async function processAgendaDownload(task: any): Promise<void> {
-  const input = task.input as {
-    meetingId: string;
-    agendaUrl?: string;
-    agendaViewUrl?: string;
-  };
-
-  if (!input.meetingId) {
-    throw new Error("No meetingId provided for agenda download");
-  }
-
+async function processAgendaDownload(task: {
+  meetingId: string;
+  agendaUrl?: string;
+  agendaViewUrl?: string;
+}): Promise<void> {
   // If we don't have agenda URL, get meeting details first
-  if (!input.agendaUrl && !input.agendaViewUrl) {
-    const { meeting } = await tgov.getMeeting({ id: input.meetingId });
+  if (!task.agendaUrl && !task.agendaViewUrl) {
+    const { meeting } = await tgov.getMeeting({ id: task.meetingId });
 
     if (!meeting || !meeting.agendaViewUrl) {
-      throw new Error(`No agenda URL available for meeting ${input.meetingId}`);
+      throw new Error(`No agenda URL available for meeting ${task.meetingId}`);
     }
 
-    input.agendaViewUrl = meeting.agendaViewUrl;
+    task.agendaViewUrl = meeting.agendaViewUrl;
   }
 
-  const url = input.agendaUrl || input.agendaViewUrl;
-  if (!url) {
-    throw new Error("No agenda URL available");
-  }
+  const url = task.agendaUrl || task.agendaViewUrl;
+  if (!url) throw new Error("No agenda URL available");
 
   // Download the meeting agenda document
   const document = await documents.downloadDocument({
     url,
-    meetingRecordId: input.meetingId,
-    title: `Meeting Agenda ${input.meetingId}`,
+    meetingRecordId: task.meetingId,
+    title: `Meeting Agenda ${task.meetingId}`,
   });
 
   // Update task with success
   await updateTaskStatus({
     taskId: task.id,
-    status: TaskStatus.COMPLETED,
+    status: JobStatus.COMPLETED,
     output: {
       documentId: document.id,
       documentUrl: document.url,
@@ -210,7 +189,7 @@ async function processDocumentDownload(task: any): Promise<void> {
   // Update task with success
   await updateTaskStatus({
     taskId: task.id,
-    status: TaskStatus.COMPLETED,
+    status: JobStatus.COMPLETED,
     output: {
       documentId: document.id,
       documentUrl: document.url,
@@ -241,7 +220,7 @@ async function processDocumentParse(task: any): Promise<void> {
   // Update task with success
   await updateTaskStatus({
     taskId: task.id,
-    status: TaskStatus.COMPLETED,
+    status: JobStatus.COMPLETED,
     output: {
       documentId: input.documentId,
       parsedContent: {
@@ -309,7 +288,7 @@ export const queueAgendaBatch = api(
     const batch = await db.processingBatch.create({
       data: {
         batchType: BatchType.DOCUMENT,
-        status: BatchStatus.QUEUED,
+        status: JobStatus.QUEUED,
         priority,
         totalTasks: meetingIds.length,
         queuedTasks: meetingIds.length,
@@ -326,7 +305,7 @@ export const queueAgendaBatch = api(
         data: {
           batchId: batch.id,
           taskType: TaskType.AGENDA_DOWNLOAD,
-          status: TaskStatus.QUEUED,
+          status: JobStatus.QUEUED,
           priority,
           input: { meetingRecordId: meetingId, taskType: "agenda_download" },
           meetingRecordId: meetingId,
@@ -362,7 +341,7 @@ export const queueAgendaBatch = api(
 /**
  * Auto-queue unprocessed meeting agendas for download
  */
-export const autoQueueMeetingAgendas = api(
+export const queueAgendaArchival = api(
   {
     method: "POST",
     path: "/batch/documents/auto-queue-agendas",
@@ -380,7 +359,11 @@ export const autoQueueMeetingAgendas = api(
     log.info(`Auto-queueing meeting agendas from past ${daysBack} days`);
 
     // Get meetings from TGov service
-    const { meetings } = await tgov.listMeetings({ limit: 100 });
+    const { meetings } = await tgov.listMeetings({
+      where: {
+        ...(daysBack && { startedAt: { gte: subDays(new Date(), daysBack) } }),
+      },
+    });
 
     // Filter for meetings with agenda URLs but no agendaId (unprocessed)
     const unprocessedMeetings = meetings

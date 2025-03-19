@@ -6,11 +6,12 @@
  * - Audio extraction
  * - Media file management
  */
-import { db } from "../data";
+import { db } from "../db";
+import { BatchType } from "../db/client";
+import { $TaskType, JobStatus, TaskType } from "../db/models/db";
 import { updateTaskStatus } from "../index";
 import { batchCreated, taskCompleted } from "../topics";
 
-import { TaskStatus } from "@prisma/client/batch/index.js";
 import { media, tgov } from "~encore/clients";
 
 import { api } from "encore.dev/api";
@@ -20,7 +21,11 @@ import { Subscription } from "encore.dev/pubsub";
 /**
  * List of media task types this processor handles
  */
-const MEDIA_TASK_TYPES = ["video_download", "audio_extract", "video_process"];
+const MEDIA_TASK_TYPES = [
+  TaskType.VIDEO_DOWNLOAD,
+  TaskType.AUDIO_EXTRACT,
+  TaskType.VIDEO_PROCESS,
+] satisfies Array<$TaskType> & { length: 3 };
 
 /**
  * Process the next batch of available media tasks
@@ -39,61 +44,51 @@ export const processNextMediaTasks = api(
     const { limit = 5 } = params;
 
     // Get next available tasks for media processing
+
     const nextTasks = await db.processingTask.findMany({
-      where: {
-        status: TaskStatus.QUEUED,
-        taskType: { in: MEDIA_TASK_TYPES },
-      },
-      orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
       take: limit,
-      // Include any task dependencies to check if they're satisfied
-      include: {
+      orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+      where: {
+        status: JobStatus.QUEUED,
+        taskType: { in: MEDIA_TASK_TYPES },
         dependsOn: {
-          include: {
-            dependencyTask: true,
+          every: {
+            dependencyTask: {
+              status: {
+                in: [JobStatus.COMPLETED, JobStatus.COMPLETED_WITH_ERRORS],
+              },
+            },
           },
         },
       },
     });
 
-    // Filter for tasks that have all dependencies satisfied
-    const availableTasks = nextTasks.filter((task) => {
-      if (task.dependsOn.length === 0) return true;
+    if (nextTasks.length === 0) return { processed: 0 };
 
-      // All dependencies must be completed
-      return task.dependsOn.every(
-        (dep) => dep.dependencyTask.status === "completed",
-      );
-    });
-
-    if (availableTasks.length === 0) {
-      return { processed: 0 };
-    }
-
-    log.info(`Processing ${availableTasks.length} media tasks`);
+    log.info(`Processing ${nextTasks.length} media tasks`);
 
     let processedCount = 0;
 
     // Process each task
-    for (const task of availableTasks) {
+    for (const task of nextTasks) {
       try {
         // Mark task as processing
         await updateTaskStatus({
           taskId: task.id,
-          status: TaskStatus.PROCESSING,
+          status: JobStatus.PROCESSING,
         });
 
         // Process based on task type
         switch (task.taskType) {
-          case "video_download":
+          case TaskType.VIDEO_DOWNLOAD:
             await processVideoDownload(task);
             break;
 
-          case "audio_extract":
+          case TaskType.AUDIO_EXTRACT:
             await processAudioExtract(task);
             break;
 
-          case "video_process":
+          case TaskType.VIDEO_PROCESS:
             await processVideoComplete(task);
             break;
 
@@ -112,7 +107,7 @@ export const processNextMediaTasks = api(
         // Mark task as failed
         await updateTaskStatus({
           taskId: task.id,
-          status: TaskStatus.FAILED,
+          status: JobStatus.FAILED,
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -147,12 +142,10 @@ async function processVideoDownload(task: any): Promise<void> {
     downloadUrl = extractResult.videoUrl;
   }
 
-  if (!downloadUrl) {
-    throw new Error("Failed to determine download URL");
-  }
+  if (!downloadUrl) throw new Error("Failed to determine download URL");
 
   // Download the video
-  const downloadResult = await media.downloadMedia({
+  const downloadResult = await media.downloadVideos({
     url: downloadUrl,
     meetingRecordId: input.meetingRecordId,
   });
@@ -160,7 +153,7 @@ async function processVideoDownload(task: any): Promise<void> {
   // Update task with success
   await updateTaskStatus({
     taskId: task.id,
-    status: TaskStatus.COMPLETED,
+    status: JobStatus.COMPLETED,
     output: {
       videoId: downloadResult.videoId,
       videoUrl: downloadResult.videoUrl,
@@ -192,7 +185,7 @@ async function processAudioExtract(task: any): Promise<void> {
   // Update task with success
   await updateTaskStatus({
     taskId: task.id,
-    status: TaskStatus.COMPLETED,
+    status: JobStatus.COMPLETED,
     output: {
       audioId: extractResult.audioId,
       audioUrl: extractResult.audioUrl,
@@ -246,7 +239,7 @@ async function processVideoComplete(task: any): Promise<void> {
   // Update task with success
   await updateTaskStatus({
     taskId: task.id,
-    status: TaskStatus.COMPLETED,
+    status: JobStatus.COMPLETED,
     output: {
       videoId: processResult.videoId,
       videoUrl: processResult.videoUrl,
@@ -269,7 +262,7 @@ async function processVideoComplete(task: any): Promise<void> {
 const _ = new Subscription(batchCreated, "media-batch-processor", {
   handler: async (event) => {
     // Only process batches of type "media"
-    if (event.batchType !== "media") return;
+    if (event.batchType !== BatchType.MEDIA) return;
 
     log.info(`Detected new media batch ${event.batchId}`, {
       batchId: event.batchId,

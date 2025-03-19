@@ -9,7 +9,7 @@
 import crypto from "crypto";
 import path from "path";
 
-import { agendas, db } from "./data";
+import { agendas, db } from "./db";
 
 import { api, APIError } from "encore.dev/api";
 import log from "encore.dev/log";
@@ -202,7 +202,7 @@ export const listDocuments = api(
 /**
  * Get document details by ID
  */
-export const getDocument = api(
+export const getDocumentById = api(
   {
     method: "GET",
     path: "/api/documents/:id",

@@ -1,0 +1,34 @@
+// DO NOT EDIT — Auto-generated file; see https://github.com/mogzol/prisma-generator-typescript-interfaces
+
+export type CommitteeDto = {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  meetingRecords?: MeetingRecordDto[];
+};
+
+export type MeetingRecordDto = {
+  id: string;
+  name: string;
+  startedAt: string;
+  endedAt: string;
+  createdAt: string;
+  updatedAt: string;
+  committeeId: string;
+  videoViewUrl: string | null;
+  agendaViewUrl: string | null;
+  rawJson: JsonValue;
+  videoId: string | null;
+  audioId: string | null;
+  agendaId: string | null;
+  committee?: CommitteeDto;
+};
+
+type JsonValue =
+  | string
+  | number
+  | boolean
+  | { [key in string]?: JsonValue }
+  | Array<JsonValue>
+  | null;

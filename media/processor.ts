@@ -8,7 +8,7 @@ import fs from "fs/promises";
 import path from "node:path";
 
 import env from "../env";
-import { bucket_meta, db, recordings } from "./data";
+import { bucket_meta, db, recordings } from "./db";
 import { downloadVideo, downloadVideoWithAudioExtraction } from "./downloader";
 
 import logger from "encore.dev/log";

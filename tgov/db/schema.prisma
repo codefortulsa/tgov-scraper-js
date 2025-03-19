@@ -1,0 +1,92 @@
+// This is your Prisma schema file for this service,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters", "metrics"]
+  binaryTargets   = ["native", "debian-openssl-3.0.x"]
+  output          = "./client"
+}
+
+generator json {
+    provider     = "prisma-json-types-generator"
+    engineType   = "library"
+    clientOutput = "./client"
+}
+
+generator docs {
+    provider = "node node_modules/prisma-docs-generator"
+    output   = "./docs"
+}
+
+generator markdown {
+    provider = "prisma-markdown"
+    output   = "./docs/README.md"
+    title    = "Models"
+    namespace = "`batch` service"
+}
+
+generator typescriptInterfaces {
+  provider      = "prisma-generator-typescript-interfaces"
+  modelType     = "type"
+  enumType      = "object"
+  headerComment = "DO NOT EDIT — Auto-generated file; see https://github.com/mogzol/prisma-generator-typescript-interfaces"
+  modelSuffix   = "Model"
+  output        = "./models/db.ts"
+  prettier      = true
+}
+
+generator typescriptInterfacesJson {
+  provider      = "prisma-generator-typescript-interfaces"
+  modelType     = "type"
+  enumType      = "stringUnion"
+  enumPrefix    = "$"
+  headerComment = "DO NOT EDIT — Auto-generated file; see https://github.com/mogzol/prisma-generator-typescript-interfaces"
+  output        = "./models/dto.ts"
+  modelSuffix   = "Dto"
+  dateType      = "string"
+  bigIntType    = "string"
+  decimalType   = "string"
+  bytesType     = "ArrayObject"
+  prettier      = true
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("TGOV_DATABASE_URL")
+}
+
+
+// Models related to TGov meeting data
+
+model Committee {
+  id             String          @id @default(ulid())
+  name           String          @unique
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  meetingRecords MeetingRecord[]
+}
+
+model MeetingRecord {
+  id            String   @id @default(ulid())
+  name          String   @unique
+  startedAt     DateTime @db.Timestamptz(6)
+  endedAt       DateTime @db.Timestamptz(6)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  committeeId   String
+  videoViewUrl  String?
+  agendaViewUrl String?
+
+  ///[MeetingRawJSON]
+  rawJson Json
+
+  // Foreign keys to link with other services
+  videoId  String?
+  audioId  String?
+  agendaId String?
+
+  committee Committee @relation(fields: [committeeId], references: [id])
+
+  @@unique([committeeId, startedAt])
+}

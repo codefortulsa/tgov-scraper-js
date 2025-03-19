@@ -4,12 +4,8 @@
  * This file defines the pub/sub topics used for event-driven communication
  * between services in the batch processing pipeline.
  */
-import {
-  BatchStatus,
-  BatchType,
-  TaskStatus,
-  TaskType,
-} from "@prisma/client/batch/index.js";
+import { $TaskType, BatchType, JobStatus } from "./db/models/db";
+import { BatchMetadata } from "./db/models/json";
 
 import { Attribute, Topic } from "encore.dev/pubsub";
 
@@ -50,11 +46,12 @@ export interface BatchCreatedEvent extends BatchEventBase {
   /**
    * Optional metadata about the batch
    */
-  metadata?: PrismaJson.BatchMetadataJSON;
+  metadata?: BatchMetadata;
 }
 
 /**
  * Event published when a task is completed
+ * Optimized to contain only essential data, subscribers can query the database for details
  */
 export interface TaskCompletedEvent extends BatchEventBase {
   /**
@@ -70,7 +67,7 @@ export interface TaskCompletedEvent extends BatchEventBase {
   /**
    * The type of task that completed
    */
-  taskType: TaskType;
+  taskType: $TaskType;
 
   /**
    * Whether the task was successful
@@ -78,27 +75,24 @@ export interface TaskCompletedEvent extends BatchEventBase {
   success: boolean;
 
   /**
-   * The output of the task
-   */
-  output?: PrismaJson.TaskOutputJSON;
-
-  /**
    * The detailed status of the task
    */
-  status: TaskStatus;
+  status: JobStatus;
 
   /**
-   * Error message if the task failed
+   * Error message if the task failed - only included for failed tasks
    */
   errorMessage?: string;
 
   /**
-   * IDs of resources created by the task (videoId, audioId, documentId, etc.)
+   * IDs of primary resources created by the task
+   * Only contains top-level resource identifiers needed for dependent processing
    */
   resourceIds: Record<string, string>;
 
   /**
    * Meeting record ID associated with this task, if applicable
+   * Included as it's commonly used for linking records across services
    */
   meetingRecordId?: string;
 }
@@ -115,7 +109,7 @@ export interface BatchStatusChangedEvent extends BatchEventBase {
   /**
    * The new status of the batch
    */
-  status: BatchStatus;
+  status: JobStatus;
 
   /**
    * Summary of task statuses

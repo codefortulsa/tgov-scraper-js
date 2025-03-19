@@ -4,16 +4,11 @@
  * Provides a unified interface for managing and coordinating different types of task processors.
  * Handles task scheduling, coordination between dependent tasks, and processor lifecycle.
  */
-import { db } from "../data";
+import { db } from "../db";
+import { BatchType, JobStatus } from "../db/models/db";
 import { batchStatusChanged } from "../topics";
 import { processNextDocumentTasks } from "./documents";
 import { processNextMediaTasks } from "./media";
-
-import {
-  BatchStatus,
-  BatchType,
-  TaskStatus,
-} from "@prisma/client/batch/index.js";
 
 import { api, APIError } from "encore.dev/api";
 import { CronJob } from "encore.dev/cron";
@@ -33,7 +28,7 @@ type BatchSummary = {
   id: string;
   name?: string;
   batchType: BatchType;
-  status: BatchStatus;
+  status: JobStatus;
   taskSummary: {
     total: number;
     completed: number;
@@ -170,7 +165,7 @@ export const getAllBatchStatus = api(
     /**
      * Filter by status
      */
-    status?: BatchStatus;
+    status?: JobStatus;
   }): Promise<{
     activeBatches: Record<string, Array<BatchSummary>>;
   }> => {
@@ -179,7 +174,7 @@ export const getAllBatchStatus = api(
     const batches = await db.processingBatch.findMany({
       where: {
         status: status || {
-          notIn: [BatchStatus.COMPLETED, BatchStatus.FAILED],
+          notIn: [JobStatus.COMPLETED, JobStatus.FAILED],
         },
       },
       orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
@@ -228,10 +223,10 @@ export const updateBatchStatus = api(
   },
   async (params: {
     batchId: string;
-    status: BatchStatus;
+    status: JobStatus;
   }): Promise<{
     success: boolean;
-    previousStatus?: BatchStatus;
+    previousStatus?: JobStatus;
   }> => {
     const { batchId, status } = params;
 
@@ -329,7 +324,7 @@ export const retryFailedTasks = api(
       const failedTasks = await db.processingTask.findMany({
         where: {
           batchId,
-          status: TaskStatus.FAILED,
+          status: JobStatus.FAILED,
           retryCount: { lt: db.processingTask.fields.maxRetries },
         },
         take: limit,
@@ -345,7 +340,7 @@ export const retryFailedTasks = api(
         await db.processingTask.update({
           where: { id: task.id },
           data: {
-            status: TaskStatus.QUEUED,
+            status: JobStatus.QUEUED,
             retryCount: { increment: 1 },
             error: null,
           },
@@ -361,10 +356,10 @@ export const retryFailedTasks = api(
           failedTasks: { decrement: retriedCount },
           status:
             (
-              batch.status === BatchStatus.FAILED ||
-              batch.status === BatchStatus.COMPLETED_WITH_ERRORS
+              batch.status === JobStatus.FAILED ||
+              batch.status === JobStatus.COMPLETED_WITH_ERRORS
             ) ?
-              BatchStatus.PROCESSING
+              JobStatus.PROCESSING
             : batch.status,
         },
       });
@@ -416,8 +411,8 @@ export const cancelBatch = api(
 
       // Only allow canceling batches that are not completed or failed
       if (
-        batch.status === BatchStatus.COMPLETED ||
-        batch.status === BatchStatus.FAILED
+        batch.status === JobStatus.COMPLETED ||
+        batch.status === JobStatus.FAILED
       ) {
         throw APIError.invalidArgument(
           `Cannot cancel batch with status ${batch.status}`,
@@ -428,7 +423,7 @@ export const cancelBatch = api(
       const pendingTasks = await db.processingTask.findMany({
         where: {
           batchId,
-          status: { in: [TaskStatus.QUEUED, TaskStatus.PROCESSING] },
+          status: { in: [JobStatus.QUEUED, JobStatus.PROCESSING] },
         },
       });
 
@@ -437,7 +432,7 @@ export const cancelBatch = api(
         await db.processingTask.update({
           where: { id: task.id },
           data: {
-            status: TaskStatus.FAILED,
+            status: JobStatus.FAILED,
             error: "Canceled by user",
             completedAt: new Date(),
           },
@@ -448,7 +443,7 @@ export const cancelBatch = api(
       await db.processingBatch.update({
         where: { id: batchId },
         data: {
-          status: BatchStatus.FAILED,
+          status: JobStatus.FAILED,
           queuedTasks: 0,
           processingTasks: 0,
           failedTasks: batch.failedTasks + pendingTasks.length,
@@ -458,7 +453,7 @@ export const cancelBatch = api(
       // Publish status changed event
       await batchStatusChanged.publish({
         batchId,
-        status: BatchStatus.FAILED,
+        status: JobStatus.FAILED,
         taskSummary: {
           total: batch.totalTasks,
           completed: batch.completedTasks,
