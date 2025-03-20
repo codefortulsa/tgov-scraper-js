@@ -7,8 +7,7 @@
   "type": "module",
   "scripts": {
     "test": "vitest",
-    "gen": "encore gen client --output=./frontend/app/lib/client.ts --env=local",
-    "build": "cd frontend && npx astro build",
+    "postinstall": "npm run db:gen",
     "db:gen": "npx concurrently node:db:gen:*",
     "db:gen:transcription": "npx prisma generate --schema ./transcription/data/schema.prisma",
     "db:gen:media": "npx prisma generate --schema ./media/data/schema.prisma",
