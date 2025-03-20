@@ -13,49 +13,49 @@ datasource db {
 // Models related to transcription processing
 
 model Transcription {
-  id              String   @id @default(ulid())
-  text            String
-  language        String?  // Detected or specified language
-  model           String   // The model used for transcription (e.g., "whisper-1")
-  confidence      Float?   // Confidence score of the transcription (0-1)
-  processingTime  Int?     // Time taken to process in seconds
-  status          String   // queued, processing, completed, failed
-  error           String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  
+  id             String   @id @default(ulid())
+  text           String
+  language       String? // Detected or specified language
+  model          String // The model used for transcription (e.g., "whisper-1")
+  confidence     Float? // Confidence score of the transcription (0-1)
+  processingTime Int? // Time taken to process in seconds
+  status         String // queued, processing, completed, failed
+  error          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
   // References to related records
-  audioFileId     String   // Reference to MediaFile in media service
-  meetingRecordId String?  // Reference to MeetingRecord in TGov service
-  
+  audioFileId     String // Reference to MediaFile in media service
+  meetingRecordId String? // Reference to MeetingRecord in TGov service
+
   // Segments for time-aligned transcription
-  segments        TranscriptionSegment[]
+  segments TranscriptionSegment[]
 }
 
 model TranscriptionSegment {
-  id              String   @id @default(ulid())
-  index           Int      // Segment index in the transcription
-  start           Float    // Start time in seconds
-  end             Float    // End time in seconds
-  text            String   // Text content of this segment
-  confidence      Float?   // Confidence score for this segment
-  
+  id         String @id @default(ulid())
+  index      Int // Segment index in the transcription
+  start      Float // Start time in seconds
+  end        Float // End time in seconds
+  text       String // Text content of this segment
+  confidence Float? // Confidence score for this segment
+
   transcriptionId String
   transcription   Transcription @relation(fields: [transcriptionId], references: [id], onDelete: Cascade)
 }
 
 model TranscriptionJob {
-  id              String   @id @default(ulid())
-  status          String   // queued, processing, completed, failed
-  priority        Int      @default(0)
-  model           String   // The model to use (e.g., "whisper-1")
-  language        String?  // Optional language hint
-  error           String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  
+  id        String   @id @default(ulid())
+  status    String // queued, processing, completed, failed
+  priority  Int      @default(0)
+  model     String // The model to use (e.g., "whisper-1")
+  language  String? // Optional language hint
+  error     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   // References
-  audioFileId     String   // Reference to MediaFile in media service
-  meetingRecordId String?  // Reference to MeetingRecord in TGov service
-  transcriptionId String?  // Reference to resulting Transcription
+  audioFileId     String // Reference to MediaFile in media service
+  meetingRecordId String? // Reference to MeetingRecord in TGov service
+  transcriptionId String? // Reference to resulting Transcription
 }
