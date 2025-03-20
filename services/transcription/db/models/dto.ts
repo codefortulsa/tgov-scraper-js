@@ -11,9 +11,11 @@ export type TranscriptionDto = {
   error: string | null;
   createdAt: string;
   updatedAt: string;
+  diarized: boolean;
   audioFileId: string;
   meetingRecordId: string | null;
   segments?: TranscriptionSegmentDto[];
+  speakers?: SpeakerDto[];
 };
 
 export type TranscriptionSegmentDto = {
@@ -23,8 +25,19 @@ export type TranscriptionSegmentDto = {
   end: number;
   text: string;
   confidence: number | null;
+  speakerId: string | null;
   transcriptionId: string;
   transcription?: TranscriptionDto;
+  speaker?: SpeakerDto | null;
+};
+
+export type SpeakerDto = {
+  id: string;
+  label: string;
+  name: string | null;
+  transcriptionId: string;
+  transcription?: TranscriptionDto;
+  segments?: TranscriptionSegmentDto[];
 };
 
 export type TranscriptionJobDto = {
@@ -36,6 +49,8 @@ export type TranscriptionJobDto = {
   error: string | null;
   createdAt: string;
   updatedAt: string;
+  enableDiarization: boolean;
+  diarizationModel: string | null;
   audioFileId: string;
   meetingRecordId: string | null;
   transcriptionId: string | null;

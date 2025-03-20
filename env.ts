@@ -33,6 +33,11 @@ const Env = v.looseObject({
   ),
   CHROMIUM_PATH: v.optional(v.string()),
   OPENAI_API_KEY: v.string(),
+  MICROSOFT_API_KEY: v.optional(v.string()),
+  MICROSOFT_PHI4_API_ENDPOINT: v.optional(
+    v.string(),
+    "https://api.microsoft.com/v1/phi4",
+  ),
   TMP_DIR: v.optional(v.string(), "." + path.sep + "tmp"),
 });
 

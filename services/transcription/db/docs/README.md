@@ -17,6 +17,7 @@ erDiagram
   String error "nullable"
   DateTime createdAt
   DateTime updatedAt
+  Boolean diarized
   String audioFileId
   String meetingRecordId "nullable"
 }
@@ -27,6 +28,13 @@ erDiagram
   Float end
   String text
   Float confidence "nullable"
+  String speakerId FK "nullable"
+  String transcriptionId FK
+}
+"Speaker" {
+  String id PK
+  String label
+  String name "nullable"
   String transcriptionId FK
 }
 "TranscriptionJob" {
@@ -38,11 +46,15 @@ erDiagram
   String error "nullable"
   DateTime createdAt
   DateTime updatedAt
+  Boolean enableDiarization
+  String diarizationModel "nullable"
   String audioFileId
   String meetingRecordId "nullable"
   String transcriptionId "nullable"
 }
 "TranscriptionSegment" }o--|| "Transcription" : transcription
+"TranscriptionSegment" }o--o| "Speaker" : speaker
+"Speaker" }o--|| "Transcription" : transcription
 ```
 
 ### `Transcription`
@@ -58,6 +70,7 @@ erDiagram
   - `error`: 
   - `createdAt`: 
   - `updatedAt`: 
+  - `diarized`: 
   - `audioFileId`: 
   - `meetingRecordId`: 
 
@@ -70,6 +83,15 @@ erDiagram
   - `end`: 
   - `text`: 
   - `confidence`: 
+  - `speakerId`: 
+  - `transcriptionId`: 
+
+### `Speaker`
+
+**Properties**
+  - `id`: 
+  - `label`: 
+  - `name`: 
   - `transcriptionId`: 
 
 ### `TranscriptionJob`
@@ -83,6 +105,8 @@ erDiagram
   - `error`: 
   - `createdAt`: 
   - `updatedAt`: 
+  - `enableDiarization`: 
+  - `diarizationModel`: 
   - `audioFileId`: 
   - `meetingRecordId`: 
   - `transcriptionId`: 

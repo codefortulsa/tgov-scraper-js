@@ -68,6 +68,7 @@ model Transcription {
   error          String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+  diarized       Boolean  @default(false) // Whether speaker diarization was performed
 
   // References to related records
   audioFileId     String // Reference to MediaFile in media service
@@ -75,29 +76,44 @@ model Transcription {
 
   // Segments for time-aligned transcription
   segments TranscriptionSegment[]
+  // Speaker data for diarization
+  speakers Speaker[]
 }
 
 model TranscriptionSegment {
-  id         String @id @default(ulid())
+  id         String  @id @default(ulid())
   index      Int // Segment index in the transcription
   start      Float // Start time in seconds
   end        Float // End time in seconds
   text       String // Text content of this segment
   confidence Float? // Confidence score for this segment
+  speakerId  String? // ID of the speaker for this segment
 
   transcriptionId String
   transcription   Transcription @relation(fields: [transcriptionId], references: [id], onDelete: Cascade)
+  speaker         Speaker?      @relation(fields: [speakerId], references: [id])
+}
+
+model Speaker {
+  id              String                 @id @default(ulid())
+  label           String // Speaker identifier (e.g., "Speaker 1")
+  name            String? // Optional identified name of the speaker
+  transcriptionId String
+  transcription   Transcription          @relation(fields: [transcriptionId], references: [id], onDelete: Cascade)
+  segments        TranscriptionSegment[]
 }
 
 model TranscriptionJob {
-  id        String   @id @default(ulid())
-  status    String // queued, processing, completed, failed
-  priority  Int      @default(0)
-  model     String // The model to use (e.g., "whisper-1")
-  language  String? // Optional language hint
-  error     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                String   @id @default(ulid())
+  status            String // queued, processing, completed, failed
+  priority          Int      @default(0)
+  model             String // The model to use (e.g., "whisper-1")
+  language          String? // Optional language hint
+  error             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  enableDiarization Boolean  @default(false) // Whether to perform speaker diarization
+  diarizationModel  String? // Model to use for diarization (e.g., "phi-4")
 
   // References
   audioFileId     String // Reference to MediaFile in media service

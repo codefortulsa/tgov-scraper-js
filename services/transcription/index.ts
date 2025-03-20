@@ -6,6 +6,8 @@ import { Readable } from "stream";
 import env from "../../env";
 import { JobStatus } from "../enums";
 import { db } from "./db";
+import { SpeakerModel } from "./db/models/db";
+import { Phi4Client } from "./phi4Client";
 import { WhisperClient } from "./whisperClient";
 
 import { media } from "~encore/clients";
@@ -60,6 +62,20 @@ export interface TranscriptionResult {
    * Time-aligned segments of the transcription
    */
   segments?: TranscriptionSegment[];
+  /** Whether speaker diarization was performed */
+  diarized: boolean;
+  /** Speakers identified in the transcription (if diarized) */
+  speakers?: SpeakerInfo[];
+}
+
+/** Information about a speaker in a diarized transcription */
+export interface SpeakerInfo {
+  /** Unique identifier for the speaker */
+  id: string;
+  /** Label for the speaker (e.g., "SpeakerModel 1") */
+  label: string;
+  /** Identified name of the speaker if available */
+  name?: string;
 }
 
 /** Request parameters for creating a new transcription */
@@ -76,6 +92,14 @@ export interface TranscriptionRequest {
    * Optional priority for job processing (higher values = higher priority)
    */
   priority?: number;
+  /** Whether to perform speaker diarization */
+  enableDiarization?: boolean;
+  /** Model to use for diarization (default: "phi-4" if diarization is enabled) */
+  diarizationModel?: string;
+  /** Minimum number of speakers to identify (optional) */
+  minSpeakers?: number;
+  /** Maximum number of speakers to identify (optional) */
+  maxSpeakers?: number;
 }
 
 /** Response from transcription job operations */
@@ -98,6 +122,15 @@ const whisperClient = new WhisperClient({
   defaultModel: "whisper-1",
 });
 
+// Initialize the Phi-4 client for diarization (if API key is available)
+const phi4Client =
+  env.MICROSOFT_API_KEY ?
+    new Phi4Client({
+      apiKey: env.MICROSOFT_API_KEY,
+      apiEndpoint: env.MICROSOFT_PHI4_API_ENDPOINT,
+    })
+  : null;
+
 /** API to request a transcription for an audio file */
 export const transcribe = api(
   {
@@ -106,7 +139,24 @@ export const transcribe = api(
     expose: true,
   },
   async (req: TranscriptionRequest): Promise<TranscriptionResponse> => {
-    const { audioFileId, meetingRecordId, model, language, priority } = req;
+    const {
+      audioFileId,
+      meetingRecordId,
+      model,
+      language,
+      priority,
+      enableDiarization,
+      diarizationModel,
+      minSpeakers,
+      maxSpeakers,
+    } = req;
+
+    // Check for diarization support
+    if (enableDiarization && !phi4Client) {
+      throw APIError.internal(
+        "Diarization is not available: Microsoft API key not configured",
+      );
+    }
 
     // Validate that the audio file exists
     try {
@@ -132,6 +182,9 @@ export const transcribe = api(
           language,
           audioFileId,
           meetingRecordId,
+          enableDiarization: enableDiarization || false,
+          diarizationModel:
+            enableDiarization ? diarizationModel || "phi-4" : null,
         },
       });
 
@@ -148,6 +201,7 @@ export const transcribe = api(
         audioFileId,
         meetingRecordId,
         model: model || "whisper-1",
+        enableDiarization: enableDiarization || false,
       });
 
       return {
@@ -215,7 +269,7 @@ export const getTranscription = api(
     try {
       const transcription = await db.transcription.findUnique({
         where: { id: transcriptionId },
-        include: { segments: true },
+        include: { segments: true, speakers: true },
       });
 
       if (!transcription) {
@@ -235,12 +289,22 @@ export const getTranscription = api(
         updatedAt: transcription.updatedAt,
         audioFileId: transcription.audioFileId,
         meetingRecordId: transcription.meetingRecordId || undefined,
+        diarized: transcription.diarized,
+        speakers:
+          transcription.diarized ?
+            transcription.speakers.map((speaker) => ({
+              id: speaker.id,
+              label: speaker.label,
+              name: speaker.name || undefined,
+            }))
+          : undefined,
         segments: transcription.segments.map((segment) => ({
           index: segment.index,
           start: segment.start,
           end: segment.end,
           text: segment.text,
           confidence: segment.confidence || undefined,
+          ...(segment.speakerId && { speakerId: segment.speakerId }),
         })),
       };
     } catch (error) {
@@ -271,7 +335,7 @@ export const getMeetingTranscriptions = api(
     try {
       const transcriptions = await db.transcription.findMany({
         where: { meetingRecordId: meetingId },
-        include: { segments: true },
+        include: { segments: true, speakers: true },
       });
 
       return {
@@ -288,12 +352,22 @@ export const getMeetingTranscriptions = api(
           updatedAt: transcription.updatedAt,
           audioFileId: transcription.audioFileId,
           meetingRecordId: transcription.meetingRecordId || undefined,
+          diarized: transcription.diarized,
+          speakers:
+            transcription.diarized ?
+              transcription.speakers.map((speaker) => ({
+                id: speaker.id,
+                label: speaker.label,
+                name: speaker.name || undefined,
+              }))
+            : undefined,
           segments: transcription.segments.map((segment) => ({
             index: segment.index,
             start: segment.start,
             end: segment.end,
             text: segment.text,
             confidence: segment.confidence || undefined,
+            ...(segment.speakerId && { speakerId: segment.speakerId }),
           })),
         })),
       };
@@ -380,26 +454,50 @@ async function processJob(jobId: string): Promise<void> {
       throw new Error(`Job ${jobId} not found`);
     }
 
-    // Get the audio file details from the media service
-    const audioFile = await media.getMediaInfo({
+    // Get the media file details from the media service
+    const mediaFile = await media.getMediaInfo({
       mediaFileId: job.audioFileId,
     });
 
-    if (!audioFile || !audioFile.url) {
-      throw new Error(`Audio file ${job.audioFileId} not found or has no URL`);
+    if (!mediaFile || !mediaFile.url) {
+      throw new Error(`Media file ${job.audioFileId} not found or has no URL`);
     }
 
-    // Create a temporary directory for the audio file
+    // Create a temporary directory for the media file
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "transcription-"));
-    const audioPath = path.join(tempDir, "audio.mp3");
 
-    // Download the audio file
-    await downloadFile(audioFile.url, audioPath);
-    log.info(`Downloaded audio file for job ${jobId}`, {
+    // Determine file type and handle appropriately
+    const isVideo = mediaFile.mimetype?.startsWith("video/");
+    const fileExt =
+      isVideo ?
+        mediaFile.mimetype?.includes("mp4") ?
+          ".mp4"
+        : ".webm"
+      : ".mp3";
+
+    const mediaPath = path.join(tempDir, `media${fileExt}`);
+    const audioPath = isVideo ? path.join(tempDir, "audio.mp3") : mediaPath;
+
+    // Download the media file
+    await downloadFile(mediaFile.url, mediaPath);
+    log.info(`Downloaded media file for job ${jobId}`, {
       jobId,
-      audioFileId: job.audioFileId,
+      mediaFileId: job.audioFileId,
+      isVideo,
       tempDir,
     });
+
+    // If it's a video file, extract the audio
+    if (isVideo) {
+      if (!phi4Client) {
+        log.info(
+          `Video file provided but Phi-4 client not available, extracting audio only for job ${jobId}`,
+        );
+      }
+
+      log.info(`Extracting audio from video for job ${jobId}`);
+      await extractAudioFromVideo(mediaPath, audioPath);
+    }
 
     // Transcribe the audio file
     const startTime = Date.now();
@@ -407,11 +505,11 @@ async function processJob(jobId: string): Promise<void> {
       model: job.model,
       language: job.language || undefined,
     });
-    const processingTime = Math.floor((Date.now() - startTime) / 1000);
+    const transcriptionTime = Math.floor((Date.now() - startTime) / 1000);
 
     log.info(`Successfully transcribed audio for job ${jobId}`, {
       jobId,
-      processingTime,
+      processingTime: transcriptionTime,
       textLength: whisperResponse.text.length,
       segmentsCount: whisperResponse.segments?.length || 0,
     });
@@ -425,27 +523,95 @@ async function processJob(jobId: string): Promise<void> {
         ) / whisperResponse.segments.length
       : undefined;
 
+    // Prepare for speaker diarization if enabled
+    let diarized = false;
+    let speakersData: SpeakerModel[] = [];
+    let diarizedSegments = whisperResponse.segments || [];
+
+    // Perform speaker diarization if requested and we have a phi4Client
+    if (
+      job.enableDiarization &&
+      phi4Client &&
+      whisperResponse.segments &&
+      whisperResponse.segments.length > 0
+    ) {
+      try {
+        log.info(`Starting speaker diarization for job ${jobId}`);
+
+        const diarizationStartTime = Date.now();
+        const diarizationResult = await phi4Client.diarizeAudio({
+          audioPath,
+          videoPath: isVideo ? mediaPath : undefined,
+          transcriptionSegments: whisperResponse.segments,
+          language: whisperResponse.language,
+        });
+
+        const diarizationTime = Math.floor(
+          (Date.now() - diarizationStartTime) / 1000,
+        );
+        log.info(`Completed speaker diarization for job ${jobId}`, {
+          jobId,
+          speakersCount: diarizationResult.speakers.length,
+          processingTime: diarizationTime,
+        });
+
+        diarized = true;
+        speakersData = diarizationResult.speakers;
+        diarizedSegments = diarizationResult.segments.map((s) =>
+          Object.assign(s, { confidence: s.confidence ?? undefined }),
+        );
+      } catch (error) {
+        // Log error but continue with the transcription without diarization
+        log.error(`Failed to perform speaker diarization for job ${jobId}`, {
+          jobId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // Total processing time including diarization if performed
+    const processingTime = Math.floor((Date.now() - startTime) / 1000);
+
     // Create the transcription record
+    const transcriptionData = {
+      text: whisperResponse.text,
+      language: whisperResponse.language,
+      model: job.model,
+      confidence: averageConfidence,
+      processingTime,
+      status: JobStatus.COMPLETED,
+      audioFileId: job.audioFileId,
+      meetingRecordId: job.meetingRecordId,
+      diarized,
+    };
+
+    // Create transcription with speakers and segments
     const transcription = await db.transcription.create({
-      include: { segments: true },
+      include: { segments: true, speakers: true },
       data: {
-        text: whisperResponse.text,
-        language: whisperResponse.language,
-        model: job.model,
-        confidence: averageConfidence,
-        processingTime,
-        status: JobStatus.COMPLETED,
-        audioFileId: job.audioFileId,
-        meetingRecordId: job.meetingRecordId,
+        ...transcriptionData,
+        // Create speakers if diarization was performed
+        speakers:
+          diarized ?
+            {
+              create: speakersData.map((speaker) => ({
+                id: speaker.id,
+                label: speaker.label,
+                name: speaker.name,
+              })),
+            }
+          : undefined,
+        // Create segments with speaker IDs if diarized
         segments: {
-          create:
-            whisperResponse.segments?.map((segment) => ({
-              index: segment.index,
-              start: segment.start,
-              end: segment.end,
-              text: segment.text,
-              confidence: segment.confidence,
-            })) || [],
+          create: diarizedSegments.map((segment) => ({
+            index: segment.index,
+            start: segment.start,
+            end: segment.end,
+            text: segment.text,
+            confidence: segment.confidence,
+            speakerId:
+              "speakerId" in segment ? (segment as any).speakerId : null,
+          })),
         },
       },
     });
@@ -462,7 +628,9 @@ async function processJob(jobId: string): Promise<void> {
     log.info(`Completed transcription job ${jobId}`, {
       jobId,
       transcriptionId: transcription.id,
-      segments: transcription.segments.length > 0 ? "created" : "none",
+      segments: transcription.segments.length,
+      diarized,
+      speakers: diarized ? transcription.speakers.length : 0,
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -547,5 +715,37 @@ async function downloadFile(url: string, destination: string): Promise<void> {
       error: error instanceof Error ? error.message : String(error),
     });
     throw error;
+  }
+}
+
+/**
+ * Utility function to extract audio from a video file
+ */
+async function extractAudioFromVideo(
+  videoPath: string,
+  audioPath: string,
+): Promise<void> {
+  try {
+    const { exec: execCallback } = require("child_process");
+    const { promisify } = require("util");
+    const exec = promisify(execCallback);
+
+    await exec(
+      `ffmpeg -y -i "${videoPath}" -vn -acodec libmp3lame -q:a 4 "${audioPath}"`,
+    );
+
+    log.info("Extracted audio from video", {
+      videoPath,
+      audioPath,
+    });
+  } catch (error) {
+    log.error("Failed to extract audio from video", {
+      videoPath,
+      audioPath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw new Error(
+      `Failed to extract audio from video: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
