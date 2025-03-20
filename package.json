@@ -13,7 +13,8 @@
     "db:gen:archives": "npx prisma generate --schema ./archives/data/schema.prisma",
     "db:gen:media": "npx prisma generate --schema ./media/data/schema.prisma",
     "db:gen:documents": "npx prisma generate --schema ./documents/data/schema.prisma",
-    "db:gen:tgov": "npx prisma generate --schema ./tgov/data/schema.prisma",    "db:migrate:media": "npx prisma migrate dev --schema ./media/data/schema.prisma",
+    "db:gen:tgov": "npx prisma generate --schema ./tgov/data/schema.prisma",
+    "db:migrate:media": "npx prisma migrate dev --schema ./media/data/schema.prisma",
     "db:migrate:documents": "npx prisma migrate dev --schema ./documents/data/schema.prisma",
     "db:migrate:tgov": "npx prisma migrate dev --schema ./tgov/data/schema.prisma",
     "db:migrate:archives": "npx prisma migrate dev --schema ./archives/data/schema.prisma"
@@ -38,7 +39,7 @@
     "astro": "^5.4.2",
     "csv-parse": "^5.6.0",
     "date-fns": "^4.1.0",
-    "encore.dev": "^1.46.6",
+    "encore.dev": "^1.46.10",
     "ffmpeg": "^0.0.4",
     "file-type": "^20.4.0",
     "fluent-ffmpeg": "2.1.3",
