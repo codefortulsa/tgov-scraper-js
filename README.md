@@ -131,7 +131,7 @@ Each service has its own database migration files in its `data/migrations` direc
 ### Running Tests
 
 ```bash
-npm test
+encore test
 ```
 
 ## Deployment
