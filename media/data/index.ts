@@ -16,8 +16,3 @@ export const recordings = new Bucket("recordings", {
   versioned: false,
   public: true,
 });
-
-export const bucket_meta = new Bucket("bucket-meta", {
-  versioned: false,
-  public: true,
-});

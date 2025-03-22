@@ -1,0 +1,69 @@
+{
+    "$schema": "https://encore.dev/schemas/infra.schema.json",
+    "graceful_shutdown": {
+        "handlers": 1200,
+        "shutdown_hooks": 30,
+        "total": 1300
+    },
+    "metadata": {
+        "app_id": "tgov-scraper-js",
+        "base_url": "https://tgov-scraper-js.encore.dev",
+        "cloud": "self-hosted",
+        "env_name": "preview",
+        "env_type": "development"
+    },
+    "object_storage": [
+        {
+            "type": "s3",
+            "region": "local",
+            "buckets": {
+                "agendas": {
+                    "name": "tgov-scraper-js-videos",
+                    "key_prefix": "videos/",
+                    "public_base_url": "minio"
+                },
+                "recordings": {
+                    "name": "tgov-scraper-js-audio",
+                    "key_prefix": "audio/",
+                    "public_base_url": "minio"
+                }
+            }
+        }
+    ],
+    "sql_servers": [
+        {
+            "host": "postgres",
+            "tls_config": {
+                "disabled": true,
+                "disable_ca_validation": true,
+                "disable_tls_hostname_verification": true
+            },
+            "databases": {
+                "tgov": {
+                    "username": "tgov-scraper-js",
+                    "password": {
+                        "$env": "POSTGRES_PASSWORD"
+                    }
+                },
+                "media": {
+                    "username": "tgov-scraper-js",
+                    "password": {
+                        "$env": "POSTGRES_PASSWORD"
+                    }
+                },
+                "documents": {
+                    "username": "tgov-scraper-js",
+                    "password": {
+                        "$env": "POSTGRES_PASSWORD"
+                    }
+                },
+                "transcription": {
+                    "username": "tgov-scraper-js",
+                    "password": {
+                        "$env": "POSTGRES_PASSWORD"
+                    }
+                }
+            }
+        }
+    ]
+}
