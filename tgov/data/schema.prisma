@@ -8,7 +8,7 @@ generator client {
 generator json {
   provider   = "prisma-json-types-generator"
   engineType = "library"
-  output     = "./jsontypes.ts"
+  output     = "../../node_modules/@prisma/client/tgov/jsontypes.ts"
 }
 
 datasource db {

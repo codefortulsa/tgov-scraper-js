@@ -1,30 +1,32 @@
 {
-  "name": "uptime",
+  "name": "tgov-scraper-js",
   "private": true,
   "version": "0.0.1",
   "description": "Encore Uptime Monitoring Tutorial",
-  "license": "MPL-2.0",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "test": "vitest",
-    "gen": "encore gen client --output=./frontend/app/lib/client.ts --env=local",
-    "build": "cd frontend && npx astro build",
+    "postinstall": "npm run db:gen",
+    "build:docker": "encore build docker --config build.config.json tgov-scraper-js:latest",
     "db:gen": "npx concurrently node:db:gen:*",
-    "db:gen:archives": "npx prisma generate --schema ./archives/data/schema.prisma",
+    "db:gen:transcription": "npx prisma generate --schema ./transcription/data/schema.prisma",
     "db:gen:media": "npx prisma generate --schema ./media/data/schema.prisma",
     "db:gen:documents": "npx prisma generate --schema ./documents/data/schema.prisma",
     "db:gen:tgov": "npx prisma generate --schema ./tgov/data/schema.prisma",
     "db:migrate:media": "npx prisma migrate dev --schema ./media/data/schema.prisma",
     "db:migrate:documents": "npx prisma migrate dev --schema ./documents/data/schema.prisma",
     "db:migrate:tgov": "npx prisma migrate dev --schema ./tgov/data/schema.prisma",
-    "db:migrate:archives": "npx prisma migrate dev --schema ./archives/data/schema.prisma"
+    "db:migrate:transcription": "npx prisma migrate dev --schema ./transcription/data/schema.prisma"
   },
   "devDependencies": {
+    "@ianvs/prettier-plugin-sort-imports": "^4.4.1",
     "@types/fluent-ffmpeg": "^2.1.27",
     "@types/mime-types": "^2.1.4",
     "@types/node": "22.13.10",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "prettier": "^3.5.3",
     "prisma-json-types-generator": "^3.2.2",
     "typescript": "^5.2.2",
     "vitest": "3.0.8"
@@ -39,18 +41,22 @@
     "astro": "^5.4.2",
     "csv-parse": "^5.6.0",
     "date-fns": "^4.1.0",
-    "encore.dev": "^1.46.10",
+    "encore.dev": "^1.46.12",
     "ffmpeg": "^0.0.4",
     "file-type": "^20.4.0",
     "fluent-ffmpeg": "2.1.3",
     "knex": "^3.1.0",
     "mime-types": "^2.1.35",
+    "openai": "^4.87.3",
     "pg": "^8.11.3",
     "prisma": "^6.4.1",
     "puppeteer": "^24.4.0",
     "react": "^18",
     "react-dom": "^18",
     "valibot": "^1.0.0-rc.3"
+  },
+  "overrides": {
+    "async": "^2.6.4"
   },
   "packageManager": "npm@11.2.0+sha512.3dc9c50ba813a3d54393155a435fe66404b72685ab0e3008f9ae9ed8d81f6104860f07ed2656dd5748c1322d95f3140fa9b19c59a6bba7750fd12285f81866da"
 }

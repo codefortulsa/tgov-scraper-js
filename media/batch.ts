@@ -4,13 +4,14 @@
  * Provides batch processing endpoints for video acquisition and processing,
  * designed for handling multiple videos concurrently or in the background.
  */
+import { db } from "./data";
+import { processMedia } from "./processor";
+
+import { tgov } from "~encore/clients";
+
 import { api } from "encore.dev/api";
 import { CronJob } from "encore.dev/cron";
 import logger from "encore.dev/log";
-
-import { db } from "./data";
-import { processMedia } from "./processor";
-import { tgov } from "~encore/clients";
 
 // Interface for batch processing request
 interface BatchProcessRequest {
@@ -28,6 +29,7 @@ interface BatchProcessResponse {
 
 /**
  * Queue a batch of videos for processing
+ * // TODO: TEST THIS
  *
  * This endpoint accepts an array of viewer URLs and queues them for processing.
  * It returns a batch ID that can be used to check the status of the batch.
@@ -47,16 +49,19 @@ export const queueVideoBatch = api(
     const batch = await db.$transaction(async (tx) => {
       // First, create entries for each URL to be processed
       const videoTasks = await Promise.all(
-        req.viewerUrls!.map(async (url, index) => {
+        (req.viewerUrls ?? []).map(async (url, index) => {
+          const { videoUrl } = await tgov.extractVideoUrl({ viewerUrl: url });
+
           return tx.videoProcessingTask.create({
             data: {
               viewerUrl: url,
               meetingRecordId: req.meetingRecordIds?.[index],
               status: "queued",
               extractAudio: req.extractAudio ?? true,
+              downloadUrl: videoUrl,
             },
           });
-        })
+        }),
       );
 
       // Then create the batch that references these tasks
@@ -80,11 +85,12 @@ export const queueVideoBatch = api(
       totalVideos: batch.totalTasks,
       status: batch.status as BatchProcessResponse["status"],
     };
-  }
+  },
 );
 
 /**
  * Get the status of a batch
+ * // TODO: TEST THIS
  */
 export const getBatchStatus = api(
   {
@@ -126,11 +132,12 @@ export const getBatchStatus = api(
         updatedAt: task.updatedAt,
       })),
     };
-  }
+  },
 );
 
 /**
  * List all batches
+ * // TODO: TEST THIS
  */
 export const listBatches = api(
   {
@@ -160,7 +167,7 @@ export const listBatches = api(
       updatedAt: batch.updatedAt,
       taskCount: batch._count.tasks,
     }));
-  }
+  },
 );
 
 /**
@@ -172,7 +179,11 @@ export const processNextBatch = api(
     path: "/api/videos/batch/process",
     expose: true,
   },
-  async ({ batchSize = 5 }: { batchSize?: number }): Promise<{ processed: number }> => {
+  async ({
+    batchSize = 5,
+  }: {
+    batchSize?: number;
+  }): Promise<{ processed: number }> => {
     // Find the oldest queued batch
     const queuedBatch = await db.videoProcessingBatch.findFirst({
       where: { status: "queued" },
@@ -197,7 +208,7 @@ export const processNextBatch = api(
     });
 
     logger.info(
-      `Processing batch ${queuedBatch.id} with ${queuedBatch.tasks.length} videos`
+      `Processing batch ${queuedBatch.id} with ${queuedBatch.tasks.length} videos`,
     );
 
     let processed = 0;
@@ -298,11 +309,12 @@ export const processNextBatch = api(
     }
 
     return { processed };
-  }
+  },
 );
 
 /**
  * Automatic batch processing endpoint for cron job
+ * // TODO: TEST THIS
  */
 export const autoProcessNextBatch = api(
   {
@@ -312,7 +324,7 @@ export const autoProcessNextBatch = api(
   },
   async () => {
     return processNextBatch({});
-  } 
+  },
 );
 
 /**

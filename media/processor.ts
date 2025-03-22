@@ -3,13 +3,16 @@
  *
  * Provides high-level functions for downloading, processing, and storing media files
  */
-import fs from "fs/promises";
 import crypto from "crypto";
+import fs from "fs/promises";
+import path from "node:path";
+
+import env from "../env";
+import { db, recordings } from "./data";
+import { downloadVideo, downloadVideoWithAudioExtraction } from "./downloader";
+
 import logger from "encore.dev/log";
 
-import { downloadVideo } from "./downloader";
-import { extractAudioTrack } from "./extractor";
-import { db, recordings, bucket_meta } from "./data";
 import { fileTypeFromBuffer } from "file-type";
 
 export interface ProcessingOptions {
@@ -36,17 +39,17 @@ export interface ProcessedMediaResult {
  */
 export async function processMedia(
   url: string,
-  options: ProcessingOptions = {}
+  options: ProcessingOptions = {},
 ): Promise<ProcessedMediaResult> {
   const {
     filename = `video_${Date.now()}`,
-    extractAudio = false,
+    extractAudio = true,
     meetingRecordId,
   } = options;
 
   // Generate unique keys for cloud storage
-  const videoFilename = `${filename}_video`;
-  const audioFilename = `${filename}_audio`;
+  const videoFilename = `${filename}.mp4`;
+  const audioFilename = `${filename}.mp3`;
 
   // Hash the URL to use as part of the key
   const urlHash = crypto
@@ -61,35 +64,33 @@ export async function processMedia(
   logger.info(`Video key: ${videoKey}`);
   if (extractAudio) logger.info(`Audio key: ${audioKey}`);
 
-  // Create a temporary directory for processing if needed
-  const tempDir = `/tmp/${Date.now()}_${urlHash}`;
-  const videoTempPath = `${tempDir}/${videoFilename}`;
-  const audioTempPath = extractAudio
-    ? `${tempDir}/${audioFilename}`
-    : undefined;
+  const tempDir = await fs.mkdtemp(
+    env.TMP_DIR + path.sep + `media-processor-${filename}-`,
+  );
 
   try {
+    // Create a temporary directory for processing if needed
+    await fs.mkdir(env.TMP_DIR, { recursive: true });
+
+    const videoPath = path.join(`${tempDir}`, `${videoFilename}`);
+    const audioPath =
+      extractAudio ? path.join(`${tempDir}`, `${audioFilename}`) : undefined;
     // Create temp directory
     await fs.mkdir(tempDir, { recursive: true });
 
-    // Step 1: Download the video to temporary location
-    logger.info(`Downloading video to temp location: ${videoTempPath}`);
-    await downloadVideo(url, videoTempPath);
+    // Step 1: Download the video/audio to temporary location
+    logger.info(`Downloading video to temp location: ${videoPath}`);
+    if (!audioPath) await downloadVideo(url, videoPath);
+    else await downloadVideoWithAudioExtraction(url, videoPath, audioPath);
 
-    // Step 2: Extract audio if requested
-    if (extractAudio && audioTempPath) {
-      logger.info(`Extracting audio to temp location: ${audioTempPath}`);
-      await extractAudioTrack(videoTempPath, audioTempPath);
-    }
-
-    // Step 3: Upload files to storage and save to database
+    // Step 2: Upload files to storage and save to database
     const result = await uploadAndSaveToDb(
-      videoTempPath,
-      audioTempPath,
+      videoPath,
+      audioPath,
       videoKey,
       audioKey,
       url,
-      meetingRecordId
+      meetingRecordId,
     );
 
     return result;
@@ -113,7 +114,7 @@ async function uploadAndSaveToDb(
   videoKey: string,
   audioKey: string,
   sourceUrl: string,
-  meetingRecordId?: string
+  meetingRecordId?: string,
 ): Promise<ProcessedMediaResult> {
   // Read files and get their content types
   const videoBuffer = await fs.readFile(videoPath);
@@ -133,52 +134,85 @@ async function uploadAndSaveToDb(
     logger.info(`Detected audio mimetype: ${audioType}`);
   }
 
-  // Upload to cloud storage
-  const [videoAttrs, audioAttrs] = await Promise.all([
-    recordings.upload(videoKey, videoBuffer, { contentType: videoType }),
-    audioBuffer && audioType
-      ? recordings.upload(audioKey, audioBuffer, { contentType: audioType })
+  try {
+    // First upload files to storage before creating database records
+    const [videoAttrs, audioAttrs] = await Promise.all([
+      recordings.upload(videoKey, videoBuffer, { contentType: videoType }),
+      audioBuffer && audioType ?
+        recordings.upload(audioKey, audioBuffer, { contentType: audioType })
       : Promise.resolve(null),
-  ]);
+    ]);
 
-  // Save metadata to database
-  const videoFile = await db.mediaFile.create({
-    data: {
-      bucket: "recordings",
-      key: videoKey,
-      mimetype: videoType,
-      url: recordings.publicUrl(videoKey),
-      srcUrl: sourceUrl,
-      meetingRecordId,
-      fileSize: videoAttrs.size,
-      title: `Video ${new Date().toISOString().split('T')[0]}`,
-      description: `Video processed from ${sourceUrl}`,
-    },
-  });
+    // Now use a transaction to create database records
+    // This ensures that either all records are created or none are
+    return await db.$transaction(async (tx) => {
+      const videoFile = await tx.mediaFile.create({
+        data: {
+          bucket: "recordings",
+          key: videoKey,
+          mimetype: videoType,
+          url: recordings.publicUrl(videoKey),
+          srcUrl: sourceUrl,
+          meetingRecordId,
+          fileSize: videoAttrs.size,
+          title: `Video ${new Date().toISOString().split("T")[0]}`,
+          description: `Video processed from ${sourceUrl}`,
+        },
+      });
 
-  let audioFile;
-  if (audioBuffer && audioType) {
-    audioFile = await db.mediaFile.create({
-      data: {
-        bucket: "recordings",
-        key: audioKey,
-        mimetype: audioType,
-        url: audioAttrs ? recordings.publicUrl(audioKey) : undefined,
-        srcUrl: sourceUrl,
-        meetingRecordId,
-        fileSize: audioAttrs?.size,
-        title: `Audio ${new Date().toISOString().split('T')[0]}`,
-        description: `Audio extracted from ${sourceUrl}`,
-      },
+      let audioFile;
+      if (audioBuffer && audioType && audioAttrs) {
+        audioFile = await tx.mediaFile.create({
+          data: {
+            bucket: "recordings",
+            key: audioKey,
+            mimetype: audioType,
+            url: recordings.publicUrl(audioKey),
+            srcUrl: sourceUrl,
+            meetingRecordId,
+            fileSize: audioAttrs.size,
+            title: `Audio ${new Date().toISOString().split("T")[0]}`,
+            description: `Audio extracted from ${sourceUrl}`,
+          },
+        });
+      }
+
+      return {
+        videoId: videoFile.id,
+        audioId: audioFile?.id,
+        videoUrl: videoFile.url || undefined,
+        audioUrl: audioFile?.url || undefined,
+        videoMimetype: videoFile.mimetype,
+        audioMimetype: audioFile?.mimetype,
+      };
     });
-  }
+  } catch (error) {
+    // If anything fails, attempt to clean up any uploaded files
+    logger.error(`Failed to process media: ${error}`);
 
-  return {
-    videoId: videoFile.id,
-    audioId: audioFile?.id,
-    videoUrl: videoFile.url || undefined,
-    audioUrl: audioFile?.url || undefined,
-    videoMimetype: videoFile.mimetype,
-    audioMimetype: audioFile?.mimetype,
-  };
+    try {
+      // Try to remove uploaded files if they exist
+      const cleanupPromises = [];
+      cleanupPromises.push(
+        recordings.exists(videoKey).then((exists) => {
+          if (exists) return recordings.remove(videoKey);
+        }),
+      );
+
+      if (audioBuffer && audioType) {
+        cleanupPromises.push(
+          recordings.exists(audioKey).then((exists) => {
+            if (exists) return recordings.remove(audioKey);
+          }),
+        );
+      }
+
+      await Promise.allSettled(cleanupPromises);
+      logger.info("Cleaned up uploaded files after transaction failure");
+    } catch (cleanupError) {
+      logger.error(`Failed to clean up files after error: ${cleanupError}`);
+    }
+
+    throw error; // Re-throw the original error
+  }
 }

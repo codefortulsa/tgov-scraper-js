@@ -3,10 +3,12 @@
  *
  * Provides functions for extracting and splitting audio and video tracks from video files.
  */
-import ffmpeg from "fluent-ffmpeg";
 import fs from "fs/promises";
 import path from "path";
+
 import logger from "encore.dev/log";
+
+import ffmpeg from "fluent-ffmpeg";
 
 /**
  * Extracts the audio track from a video file
@@ -17,21 +19,23 @@ import logger from "encore.dev/log";
  */
 export async function extractAudioTrack(
   videoPath: string,
-  outputPath: string
+  outputPath: string,
 ): Promise<void> {
   // Ensure output directory exists
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
   return new Promise<void>((resolve, reject) => {
-    ffmpeg(videoPath)
-      .outputOptions("-vn -c:a copy") // No video
+    ffmpeg()
+      .addInput(videoPath)
       .output(outputPath)
+      .addOutputOption("-vn") // No video
+      .addOutputOption("-c:a", "copy") // Copy audio codec (no re-encoding)
       .on("start", (commandLine) => {
         logger.info(`Audio extraction started: ${commandLine}`);
       })
       .on("progress", (progress) => {
         logger.info(
-          `Audio extraction progress: ${progress.percent?.toFixed(2)}% complete`
+          `Audio extraction progress: ${progress.percent?.toFixed(2)}% complete`,
         );
       })
       .on("end", () => {
@@ -55,21 +59,23 @@ export async function extractAudioTrack(
  */
 export async function extractVideoTrack(
   videoPath: string,
-  outputPath: string
+  outputPath: string,
 ): Promise<void> {
   // Ensure output directory exists
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
   return new Promise<void>((resolve, reject) => {
-    ffmpeg(videoPath)
-      .outputOptions("-an -c:v copy") // No audio, copy video codec
+    ffmpeg()
+      .addInput(videoPath)
       .output(outputPath)
+      .addOutputOption("-an")
+      .addOutputOption("-c:v", "copy") // No audio, copy video codec (no re-encoding)
       .on("start", (commandLine) => {
         logger.info(`Video extraction started: ${commandLine}`);
       })
       .on("progress", (progress) => {
         logger.info(
-          `Video extraction progress: ${progress.percent?.toFixed(2)}% complete`
+          `Video extraction progress: ${progress.percent?.toFixed(2)}% complete`,
         );
       })
       .on("end", () => {
@@ -94,7 +100,7 @@ export async function extractVideoTrack(
 export async function extractAudioAndVideo(
   inputPath: string,
   videoOutputPath: string,
-  audioOutputPath: string
+  audioOutputPath: string,
 ): Promise<void> {
   // Ensure output directories exist
   await fs.mkdir(path.dirname(videoOutputPath), { recursive: true });
@@ -104,13 +110,13 @@ export async function extractAudioAndVideo(
     const command = ffmpeg(inputPath);
 
     // First output: video only
-    command.output(videoOutputPath).outputOptions([
+    command.output(videoOutputPath).addOutputOptions([
       "-an", // No audio
       "-c:v copy", // Copy video codec (no re-encoding)
     ]);
 
     // Second output: audio only
-    command.output(audioOutputPath).outputOptions([
+    command.output(audioOutputPath).addOutputOption([
       "-vn", // No video
       "-c:a copy", // Copy audio codec (no re-encoding)
     ]);
@@ -121,7 +127,7 @@ export async function extractAudioAndVideo(
       })
       .on("progress", (progress) => {
         logger.info(
-          `Extraction progress: ${progress.percent?.toFixed(2)}% complete`
+          `Extraction progress: ${progress.percent?.toFixed(2)}% complete`,
         );
       })
       .on("end", () => {

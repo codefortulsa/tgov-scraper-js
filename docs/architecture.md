@@ -2,11 +2,11 @@
 
 ## Overview
 
-This application scrapes meeting information from the Tulsa Government website, downloads and processes videos and documents, and makes them available through a set of APIs. The system is designed as a set of microservices, each with its own responsibility and data store.
+This application scrapes meeting information from the Tulsa Government website, downloads and processes videos and documents, transcribes audio to text, and makes them available through a set of APIs. The system is designed as a set of microservices, each with its own responsibility and data store.
 
 ## Service Structure
 
-The application is organized into three main services:
+The application is organized into four main services:
 
 ### 1. TGov Service
 **Purpose**: Scrape and provide access to Tulsa Government meeting data
@@ -49,6 +49,19 @@ The application is organized into three main services:
 - `GET /api/documents/:id` - Get a specific document
 - `POST /api/meeting-documents` - Download and link meeting agenda documents
 
+### 4. Transcription Service
+**Purpose**: Convert audio to text and manage transcriptions
+- Transcribes audio files using the OpenAI Whisper API
+- Stores and manages transcription results with time-aligned segments
+- Processes transcription jobs asynchronously
+- Provides APIs for accessing transcriptions
+
+**Key Endpoints**:
+- `POST /transcribe` - Request transcription for an audio file
+- `GET /jobs/:jobId` - Get the status of a transcription job
+- `GET /transcriptions/:transcriptionId` - Get a transcription by ID
+- `GET /meetings/:meetingId/transcriptions` - Get all transcriptions for a meeting
+
 ## Cross-Service Communication
 
 Services communicate with each other using type-safe API calls through the Encore client library:
@@ -56,12 +69,14 @@ Services communicate with each other using type-safe API calls through the Encor
 - **TGov → Media**: Media service calls TGov's `extractVideoUrl` endpoint to get download URLs
 - **Documents → TGov**: Documents service calls TGov's `listMeetings` endpoint to get meeting data
 - **Media → TGov**: Media service uses TGov's meeting data for processing videos
+- **Transcription → Media**: Transcription service calls Media's `getMediaFile` endpoint to get audio file information
 
 ## Data Flow
 
 1. TGov service scrapes meeting information from the Tulsa Government website
-2. Media service extracts download URLs and processes videos
+2. Media service extracts download URLs and processes videos, including audio extraction
 3. Documents service downloads and links agenda documents to meetings
+4. Transcription service converts audio files to text and stores the transcriptions
 
 ## Databases
 
@@ -70,6 +85,7 @@ Each service has its own database:
 - **TGov Database**: Stores committee and meeting information
 - **Media Database**: Stores media file metadata and processing tasks
 - **Documents Database**: Stores document metadata
+- **Transcription Database**: Stores transcription jobs and results
 
 ## Storage Buckets
 
